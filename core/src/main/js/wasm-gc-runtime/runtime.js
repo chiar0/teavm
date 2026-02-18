@@ -30,20 +30,20 @@ let setGlobalName = function(name, value) {
     new Function("value", name + " = value;")(value);
 }
 
-function defaults(imports, userExports, options, module) {
+function defaults(imports, userExports, options, module, stringBuiltins) {
     let context = {
         exports: null,
         userExports: userExports,
         stackDeobfuscator: null
     };
-    if (!hasStringBuiltins()) {
+    if (!stringBuiltins) {
         stringImports(imports);
     }
     dateImports(imports);
     consoleImports(imports, context);
     coreImports(imports, context, options, module);
     asyncImports(imports, context);
-    jsoImports(imports, context);
+    jsoImports(imports, context, stringBuiltins);
     imports.teavmMath = Math;
     return {
         supplyExports(exports) {
@@ -261,7 +261,7 @@ function getMemoryDefaults(module) {
     return JSON.parse(new TextDecoder().decode(sections[0]));
 }
 
-function jsoImports(imports, context) {
+function jsoImports(imports, context, stringBuiltins) {
     let javaObjectSymbol = Symbol("javaObject");
     let functionsSymbol = Symbol("functions");
     let functionOriginSymbol = Symbol("functionOrigin");
@@ -382,7 +382,7 @@ function jsoImports(imports, context) {
         )(c);
     }
     imports.teavmJso = {
-        stringBuiltinsSupported: () => hasStringBuiltins(),
+        stringBuiltinsSupported: () => stringBuiltins,
         isUndefined: o => typeof o === "undefined",
         emptyArray: () => [],
         appendToArray: (array, e) => array.push(e),
@@ -756,7 +756,7 @@ async function load(src, options) {
 
     const importObj = {};
     let userExports = {};
-    const defaultsResult = defaults(importObj, userExports, options, module);
+    const defaultsResult = defaults(importObj, userExports, options, module, await hasStringBuiltins());
     if (typeof options.installImports !== "undefined") {
         options.installImports(importObj);
     }
@@ -799,20 +799,30 @@ async function compileModule(src, isNodeJs) {
     return result;
 }
 
+let hasStringBuiltinsPromise = null;
 function hasStringBuiltins() {
-    if (stringBuiltinsCache === null) {
-        /*
-          (module
-           (type  (func))
-           (import "wasm:js-string" "cast" (func (type 0)))
-          )
-         */
-        let bytes = new Int8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 4, 1, 96, 0, 0, 2, 23, 1, 14, 119, 97,
-            115, 109, 58, 106, 115, 45, 115, 116, 114, 105, 110, 103, 4, 99, 97, 115, 116, 0, 0, 3, 1, 0,
-            5, 4, 1, 1, 0, 0, 10, -127, -128, -128, 0, 0]);
-        stringBuiltinsCache = !WebAssembly.validate(bytes, {builtins: ["js-string"]});
+    if (hasStringBuiltinsPromise === null) {
+        hasStringBuiltinsPromise = (async () => {
+            // A more sophisticated way to detect string builtins support due to bug in Safari 26.2
+            let bytes = new Int8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 7, 1, 96, 1, 127, 1, 100, 111, 2, 31, 1, 14,
+                119, 97, 115, 109, 58, 106, 115, 45, 115, 116, 114, 105, 110, 103, 12, 102, 114, 111, 109, 67, 104,
+                97, 114, 67, 111, 100, 101, 0, 0, 3, 1, 0, 5, 4, 1, 1, 0, 0, 7, 10, 1, 6, 109, 101, 109, 111, 114,
+                121, 2, 0, 10, -127, -128, -128, 0, 0]);
+            try {
+                let response = new Response(bytes, {
+                    headers: {
+                        "Content-Type": "application/wasm"
+                    }
+                });
+                let module = await WebAssembly.compileStreaming(response, { builtins: ["js-string"] });
+                await WebAssembly.instantiate(module, {}, { builtins: ["js-string"] });
+                return true;
+            } catch (e) {
+                return false;
+            }
+        })();
     }
-    return stringBuiltinsCache;
+    return hasStringBuiltinsPromise;
 }
 
 async function getDeobfuscator(path, options, isNodeJs) {
@@ -821,7 +831,7 @@ async function getDeobfuscator(path, options, isNodeJs) {
     }
     try {
         const importObj = {};
-        const defaultsResult = defaults(importObj, {}, {});
+        const defaultsResult = defaults(importObj, {}, {}, null, await hasStringBuiltins());
         const instance = await instantiateModule(options.path, path, isNodeJs, importObj);
         defaultsResult.supplyExports(instance.exports);
         return instance;
@@ -873,8 +883,6 @@ async function importNodeFs() {
     }
     return await nodeFsImportObject;
 }
-
-let stringBuiltinsCache = null;
 
 function createDeobfuscator(module, externalData, deobfuscatorFactory) {
     let deobfuscator = null;
