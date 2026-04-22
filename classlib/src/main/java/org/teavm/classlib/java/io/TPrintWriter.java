@@ -32,9 +32,11 @@
  */
 package org.teavm.classlib.java.io;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
+import java.io.UnsupportedEncodingException;
 import java.io.Writer;
 import java.util.Formatter;
 import java.util.Locale;
@@ -61,6 +63,25 @@ public class TPrintWriter extends Writer {
         super(wr);
         this.autoflush = autoflush;
         out = wr;
+    }
+
+    public TPrintWriter(File file) throws IOException {
+        this(new TBufferedWriter(new TFileWriter(file)));
+    }
+
+    public TPrintWriter(String fileName) throws IOException {
+        this(new File(fileName));
+    }
+
+    public TPrintWriter(File file, String charsetName) throws IOException,
+            UnsupportedEncodingException {
+        // TeaVM only supports UTF-8; charsetName is ignored
+        this(new TBufferedWriter(new TFileWriter(file)));
+    }
+
+    public TPrintWriter(String fileName, String charsetName) throws IOException,
+            UnsupportedEncodingException {
+        this(new File(fileName), charsetName);
     }
 
     public boolean checkError() {

@@ -44,54 +44,51 @@ typedef struct {
     TeaVM_AnnotationInfo data[0];
 } TeaVM_AnnotationInfoList;
 
+typedef void* TeaVM_MethodCaller(void* instance, void* argsArray);
+
+typedef struct TeaVM_MethodReflection TeaVM_MethodReflection;
+
 typedef struct {
-    int32_t count;
-    int8_t data[];
-} TeaVM_ByteArray;
+    TeaVM_String** name;
+    int32_t modifiers;
+    TeaVM_ClassPtr returnType;
+    TeaVM_ClassArray* parameterTypes;
+    TeaVM_MethodCaller* caller;
+    TeaVM_MethodReflection* reflection;
+    #if TEAVM_METHOD_PARAMETER_NAMES_USED
+        TeaVM_String*** parameterNames;
+    #endif
+} TeaVM_MethodInfo;
 
 typedef struct {
     int32_t count;
-    int16_t data[];
-} TeaVM_ShortArray;
+    TeaVM_MethodInfo data[0];
+} TeaVM_MethodInfoList;
 
-typedef struct {
-    int32_t count;
-    uint16_t data[];
-} TeaVM_CharArray;
-
-typedef struct {
-    int32_t count;
-    int32_t data[];
-} TeaVM_IntArray;
-
-typedef struct {
-    int32_t count;
-    int64_t data[];
-} TeaVM_LongArray;
-
-typedef struct {
-    int32_t count;
-    float data[];
-} TeaVM_FloatArray;
-
-typedef struct {
-    int32_t count;
-    double data[];
-} TeaVM_DoubleArray;
-
-typedef struct {
-    int32_t count;
-    void* data[];
-} TeaVM_RefArray;
-
-typedef struct {
-    int32_t count;
-    TeaVM_ClassPtr data[];
-} TeaVM_ClassArray;
+struct TeaVM_MethodReflection {
+    #if TEAVM_METHOD_GENERIC_RETURN_USED
+        TeaVM_Object* genericReturnType;
+    #endif
+    #if TEAVM_METHOD_GENERIC_PARAMS_USED
+        TeaVM_Array* genericParameterTypes;
+    #endif
+    #if TEAVM_METHOD_ANNOTATIONS_USED
+        TeaVM_AnnotationInfoList* annotations;
+    #endif
+    #if TEAVM_METHOD_TYPE_PARAMS_USED
+        TeaVM_Array* typeParameters;
+    #endif
+    #if TEAVM_METHOD_PARAM_ANNOTATIONS_USED
+        TeaVM_Array* parameterAnnotations;
+    #endif
+};
 
 typedef struct {
     #if TEAVM_CLASS_REFLECTION_FIELDS_USED
         TeaVM_FieldInfoList* fields;
+    #endif
+    #if TEAVM_CLASS_REFLECTION_METHODS_USED
+        TeaVM_MethodInfoList* methods;
     #endif
     #if TEAVM_CLASS_REFLECTION_ANNOTATIONS_USED
         TeaVM_AnnotationInfoList* annotations;
@@ -114,8 +111,15 @@ extern TeaVM_Class* teavm_reflection_extractType(TeaVM_ClassPtr* type);
         return cls->fields != NULL ? cls->fields->count : 0;
     }
 #endif
+#ifdef TEAVM_CLASS_REFLECTION_METHODS_USED
+    static inline int32_t teavm_reflection_methodCount(TeaVM_ClassReflection* cls) {
+        return cls->methods != NULL ? cls->methods->count : 0;
+    }
+#endif
 #ifdef TEAVM_CLASS_REFLECTION_ANNOTATIONS_USED
     static inline int32_t teavm_reflection_annotationCount(TeaVM_ClassReflection* cls) {
         return cls->annotations != NULL ? cls->annotations->count : 0;
     }
 #endif
+
+extern void* teavm_reflection_callMethod(TeaVM_MethodInfo* method, void* instance, void* args);

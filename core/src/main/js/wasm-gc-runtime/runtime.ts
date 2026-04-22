@@ -415,6 +415,9 @@ function coreImports(imports: Record<string, unknown>, context: Context): void {
     });
     imports.teavm = {
         createWeakRef(value: object, ref: unknown, queue: unknown) {
+            if (value === null) {
+                return null;
+            }
             if (queue !== null) {
                 finalizationRegistry.register(value, { ref, queue });
             }

@@ -32,6 +32,7 @@ import org.teavm.runtime.reflect.ClassInfo;
 
 public class ClassInfoGenerator implements Injector, Generator {
     private boolean enumMetadataGenerated;
+    private boolean simpleConstructorsGenerated;
 
     @Override
     public void generate(InjectorContext context, MethodReference methodRef) {
@@ -226,11 +227,15 @@ public class ClassInfoGenerator implements Injector, Generator {
     }
 
     private void writeSimpleConstructors(InjectorContext context) {
+        if (simpleConstructorsGenerated) {
+            return;
+        }
         var methodDep = context.getDependencies()
                 .getMethod(new MethodReference(Class.class, "newInstance", Object.class));
         if (methodDep == null) {
             return;
         }
+        simpleConstructorsGenerated = true;
         var writer = context.getMetadataWriter();
         writer.appendFunction("$rt_simpleConstructors").append("([");
         var first = true;
@@ -238,15 +243,20 @@ public class ClassInfoGenerator implements Injector, Generator {
             if (type instanceof ValueType.Object) {
                 var className = ((ValueType.Object) type).getClassName();
                 var cls = context.getClassSource().get(className);
-                var ctor = cls.getMethod(new MethodDescriptor("<init>", void.class));
-                if (ctor != null && !ctor.hasModifier(ElementModifier.ABSTRACT)
-                        && ctor.getLevel() == AccessLevel.PUBLIC) {
-                    if (!first) {
-                        writer.append(",").ws();
-                    }
-                    first = false;
-                    writer.appendClass(cls.getName()).append(",").ws().appendMethod(ctor.getReference());
+                if (cls == null) {
+                    continue;
                 }
+                var ctor = cls.getMethod(new MethodDescriptor("<init>", void.class));
+                if (ctor == null || ctor.hasModifier(ElementModifier.ABSTRACT)
+                        || ctor.getLevel() != AccessLevel.PUBLIC
+                        || ctor.getProgram() == null) {
+                    continue;
+                }
+                if (!first) {
+                    writer.append(",").ws();
+                }
+                first = false;
+                writer.appendClass(cls.getName()).append(",").ws().appendMethod(ctor.getReference());
             }
         }
         writer.append("]);").newLine();

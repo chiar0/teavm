@@ -1041,7 +1041,12 @@ class CoroutineTransformationVisitor implements WasmExpressionVisitor {
     }
 
     private WasmExpression isSuspending() {
-        return new WasmCall(functions.isSuspending(), new WasmGetLocal(fiberLocal));
+        var nullCheck = new WasmConditional(new WasmIsNull(new WasmGetLocal(fiberLocal)));
+        nullCheck.setType(WasmType.INT32.asBlock());
+        nullCheck.getThenBlock().getBody().add(new WasmInt32Constant(0));
+        nullCheck.getElseBlock().getBody().add(
+                new WasmCall(functions.isSuspending(), new WasmGetLocal(fiberLocal)));
+        return nullCheck;
     }
 
     private static class SwitchContainer {

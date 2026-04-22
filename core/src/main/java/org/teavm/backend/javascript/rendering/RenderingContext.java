@@ -202,21 +202,29 @@ public abstract class RenderingContext {
             }
         } else if (cst instanceof Double) {
             double value = (Double) cst;
+            String s = Double.toString(value);
+            if (s.endsWith(".")) {
+                s = s + "0";
+            }
             if (value < 0) {
                 writer.append("(");
-                writer.append(Double.toString(value));
+                writer.append(s);
                 writer.append(")");
             } else {
-                writer.append(Double.toString(value));
+                writer.append(s);
             }
         } else if (cst instanceof Float) {
             float value = (Float) cst;
+            String s = Double.toString((double) value);
+            if (s.endsWith(".")) {
+                s = s + "0";
+            }
             if (value < 0) {
                 writer.append("(");
-                writer.append(Double.toString((double) value));
+                writer.append(s);
                 writer.append(")");
             } else {
-                writer.append(Double.toString((double) value));
+                writer.append(s);
             }
         }
     }

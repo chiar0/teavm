@@ -103,5 +103,7 @@ public interface BuildStrategy {
 
     void setAssertionsRemoved(boolean assertionsRemoved);
 
+    void setEmitOnErrors(boolean emitOnErrors);
+
     BuildResult build() throws BuildException;
 }

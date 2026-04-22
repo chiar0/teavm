@@ -478,6 +478,11 @@ public class Renderer implements RenderingManager {
     private void renderClassMetadata(List<? extends ClassReader> classReaders) {
         ClassMetadataRequirements metadataRequirements = new ClassMetadataRequirements(context.getDependencyInfo());
 
+        var classNames = new HashSet<String>();
+        for (var cls : classReaders) {
+            classNames.add(cls.getName());
+        }
+
         writer.markSectionStart(SECTION_METADATA);
 
         writer.appendFunction("$rt_packages").append("([");
@@ -486,14 +491,14 @@ public class Renderer implements RenderingManager {
 
         for (int i = 0; i < classReaders.size(); i += 50) {
             int j = Math.min(i + 50, classReaders.size());
-            renderClassMetadataPortion(classReaders.subList(i, j), packageIndexes, metadataRequirements);
+            renderClassMetadataPortion(classReaders.subList(i, j), packageIndexes, metadataRequirements, classNames);
         }
 
         writer.markSectionEnd();
     }
 
     private void renderClassMetadataPortion(List<? extends ClassReader> classes, ObjectIntMap<String> packageIndexes,
-            ClassMetadataRequirements metadataRequirements) {
+            ClassMetadataRequirements metadataRequirements, Set<String> classNames) {
         writer.appendFunction("$rt_metadata").append("([");
         boolean first = true;
         for (var cls : classes) {
@@ -517,7 +522,7 @@ public class Renderer implements RenderingManager {
             }
             writer.append(",").ws();
 
-            if (cls.getParent() != null) {
+            if (cls.getParent() != null && classNames.contains(cls.getParent())) {
                 writer.appendClass(cls.getParent());
             } else {
                 writer.append("0");
@@ -530,7 +535,11 @@ public class Renderer implements RenderingManager {
                 if (i > 0) {
                     writer.append(",").ws();
                 }
-                writer.appendClass(iface);
+                if (classNames.contains(iface)) {
+                    writer.appendClass(iface);
+                } else {
+                    writer.append("0");
+                }
             }
             writer.append("],").ws();
 
@@ -542,13 +551,15 @@ public class Renderer implements RenderingManager {
                 writer.append("0");
             } else {
                 writer.append('[');
-                if (requiredMetadata.enclosingClass() && cls.getOwnerName() != null) {
+                if (requiredMetadata.enclosingClass() && cls.getOwnerName() != null
+                        && classNames.contains(cls.getOwnerName())) {
                     writer.appendClass(cls.getOwnerName());
                 } else {
                     writer.append('0');
                 }
                 writer.append(',');
-                if (requiredMetadata.declaringClass() && cls.getDeclaringClassName() != null) {
+                if (requiredMetadata.declaringClass() && cls.getDeclaringClassName() != null
+                        && classNames.contains(cls.getDeclaringClassName())) {
                     writer.appendClass(cls.getDeclaringClassName());
                 } else {
                     writer.append('0');

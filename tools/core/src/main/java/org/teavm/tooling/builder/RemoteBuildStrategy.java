@@ -240,6 +240,11 @@ public class RemoteBuildStrategy implements BuildStrategy {
     }
 
     @Override
+    public void setEmitOnErrors(boolean emitOnErrors) {
+        request.emitOnErrors = emitOnErrors;
+    }
+
+    @Override
     public BuildResult build() throws BuildException {
         RemoteBuildResponse response;
         try {

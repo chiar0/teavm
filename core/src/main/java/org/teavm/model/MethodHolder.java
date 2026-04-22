@@ -27,6 +27,7 @@ public class MethodHolder extends MemberHolder implements MethodReader {
     private Function<MethodHolder, Program> programSupplier;
     private AnnotationValue annotationDefault;
     private AnnotationContainer[] parameterAnnotations;
+    private String[] parameterNames;
     private MethodReference reference;
 
     public MethodHolder(MethodDescriptor descriptor) {
@@ -178,5 +179,14 @@ public class MethodHolder extends MemberHolder implements MethodReader {
 
     public void setAnnotationDefault(AnnotationValue annotationDefault) {
         this.annotationDefault = annotationDefault;
+    }
+
+    @Override
+    public String[] getParameterNames() {
+        return parameterNames != null ? parameterNames.clone() : null;
+    }
+
+    public void setParameterNames(String[] parameterNames) {
+        this.parameterNames = parameterNames != null ? parameterNames.clone() : null;
     }
 }

@@ -58,6 +58,22 @@ public class MethodReflectionInfoGenerator implements Injector {
                 context.writeExpr(context.getArgument(1), Precedence.min());
                 context.getWriter().append("]");
                 break;
+            case "parameterAnnotationCount":
+                context.writeExpr(context.getArgument(0), Precedence.MEMBER_ACCESS);
+                context.getWriter().append(".parameterAnnotations!=null?");
+                context.writeExpr(context.getArgument(0), Precedence.MEMBER_ACCESS);
+                context.getWriter().append(".parameterAnnotations[");
+                context.writeExpr(context.getArgument(1), Precedence.min());
+                context.getWriter().append("].length:0");
+                break;
+            case "parameterAnnotation":
+                context.writeExpr(context.getArgument(0), Precedence.MEMBER_ACCESS);
+                context.getWriter().append(".parameterAnnotations[");
+                context.writeExpr(context.getArgument(1), Precedence.min());
+                context.getWriter().append("][");
+                context.writeExpr(context.getArgument(2), Precedence.min());
+                context.getWriter().append("]");
+                break;
         }
     }
 }

@@ -157,3 +157,10 @@ TeaVM_Class* teavm_reflection_extractType(TeaVM_ClassPtr* type) {
     }
     return cls;
 }
+
+void* teavm_reflection_callMethod(TeaVM_MethodInfo* method, void* instance, void* args) {
+    if (method->caller == NULL) {
+        return NULL;
+    }
+    return method->caller(instance, args);
+}

@@ -51,8 +51,11 @@ let $rt_metadata = data => {
 
         m.binaryName = "L" + m.name + ";";
         let superclass = data[i++];
-        m.parent = superclass !== 0 ? superclass : null;
+        m.parent = (superclass !== 0 && superclass != null) ? superclass : null;
         m.superinterfaces = data[i++];
+        if (m.superinterfaces) {
+            m.superinterfaces = m.superinterfaces.filter(iface => iface != null);
+        }
         if (m.parent) {
             cls.prototype = teavm_globals.Object.create(m.parent.prototype);
         } else {
@@ -63,19 +66,19 @@ let $rt_metadata = data => {
         m.primitiveKind = 0;
 
         let innerClassInfo = data[i++];
-        if (innerClassInfo !== 0) {
+        if (innerClassInfo !== 0 && innerClassInfo != null) {
             let enclosingClass = innerClassInfo[0];
-            m.enclosingClass = enclosingClass !== 0 ? enclosingClass : null;
+            m.enclosingClass = (enclosingClass !== 0 && enclosingClass != null) ? enclosingClass : null;
             let declaringClass = innerClassInfo[1];
-            m.declaringClass = declaringClass !== 0 ? declaringClass : null;
+            m.declaringClass = (declaringClass !== 0 && declaringClass != null) ? declaringClass : null;
             let simpleName = innerClassInfo[2];
-            m.simpleName = simpleName !== 0 ? simpleName : null;
+            m.simpleName = (simpleName !== 0 && simpleName != null) ? simpleName : null;
         }
 
         let clinit = data[i++];
         m.clinit = clinit !== 0
-            ? () => { m.clinit = () => {}; clinit(); }
-            : () => {};
+            ? (function(c, meta) { return function() { meta.clinit = function() {}; c(); }; })(clinit, m)
+            : function() {};
 
         let virtualMethods = data[i++];
         if (virtualMethods !== 0) {
@@ -230,7 +233,10 @@ let $rt_readMethodMetadata = (cls, method) => {
             annotations: methodReflection.a !== void 0 ? $rt_readAnnotations(methodReflection.a) : [],
             genericReturnType: methodReflection.r !== void 0 ? $rt_readGenericType(methodReflection.r) : null,
             genericParameterTypes: resolvedGenericParameterTypes,
-            typeParameters: resolvedTypeParameters
+            typeParameters: resolvedTypeParameters,
+            parameterAnnotations: methodReflection.pa !== void 0
+                ? methodReflection.pa.map(pa => $rt_readAnnotations(pa))
+                : null
         }
     } else {
         resolvedMethodReflection = null;

@@ -25,6 +25,7 @@ import org.teavm.model.ClassReader;
 import org.teavm.model.ElementModifier;
 import org.teavm.model.FieldReader;
 import org.teavm.model.FieldReference;
+import org.teavm.model.MethodReader;
 import org.teavm.model.MethodReference;
 import org.teavm.model.ValueType;
 import org.teavm.reflection.AnnotationGenerationHelper;
@@ -47,7 +48,8 @@ class ClassReflectionGenerator {
     void generate(CodeWriter writer, IncludeManager includes, ClassReader cls) {
         var annotations = extractAnnotations(cls);
         var fields = extractFields(cls);
-        if (annotations.isEmpty() && fields.isEmpty()) {
+        var methods = extractMethods(cls);
+        if (annotations.isEmpty() && fields.isEmpty() && methods.isEmpty()) {
             writer.print("NULL");
             return;
         }
@@ -70,6 +72,14 @@ class ClassReflectionGenerator {
             }
             writer.print(".fields = ");
             generateFields(cls, fields);
+            needComma = true;
+        }
+        if (!methods.isEmpty()) {
+            if (needComma) {
+                writer.println(",");
+            }
+            writer.print(".methods = ");
+            generateMethods(cls, methods);
         }
 
         writer.println();
@@ -307,5 +317,98 @@ class ClassReflectionGenerator {
             fields.add(field);
         }
         return fields;
+    }
+
+    private List<MethodReader> extractMethods(ClassReader cls) {
+        var accessibleMethods = reflection.getAccessibleMethods(cls.getName());
+        if (accessibleMethods == null || accessibleMethods.isEmpty()) {
+            return List.of();
+        }
+        var skipPrivates = ReflectionDependencyListener.shouldSkipPrivates(cls);
+        var methods = new ArrayList<MethodReader>();
+        for (var method : cls.getMethods()) {
+            if (method.getName().equals("<clinit>")) {
+                continue;
+            }
+            var desc = method.getReference().getDescriptor();
+            if (!accessibleMethods.contains(desc)) {
+                continue;
+            }
+            if (skipPrivates) {
+                if (method.getLevel() == AccessLevel.PRIVATE || method.getLevel() == AccessLevel.PACKAGE_PRIVATE) {
+                    continue;
+                }
+            }
+            methods.add(method);
+        }
+        return methods;
+    }
+
+    private void generateMethods(ClassReader cls, List<MethodReader> methods) {
+        var names = context.getNames();
+        writer.print("(TeaVM_MethodInfoList*) &(struct { int32_t count; TeaVM_MethodInfo data[")
+                .print(String.valueOf(methods.size())).println("];}) {").indent();
+        writer.print(".count = ").print(String.valueOf(methods.size())).println(",");
+        writer.print(".data = ").println("{").indent();
+        generateMethod(cls, methods.get(0));
+        for (var i = 1; i < methods.size(); ++i) {
+            writer.println(",");
+            generateMethod(cls, methods.get(i));
+        }
+        writer.println().outdent().println("}");
+        writer.outdent().print("}");
+    }
+
+    private void generateMethod(ClassReader cls, MethodReader method) {
+        var names = context.getNames();
+        writer.println("{").indent();
+
+        var nameIndex = context.getStringPool().getStringIndex(method.getName());
+        writer.print(".name = TEAVM_GET_STRING_ADDRESS(").print(String.valueOf(nameIndex)).println(",");
+
+        var modifiers = ElementModifier.asModifiersInfo(method.readModifiers(), method.getLevel());
+        writer.print(".modifiers = ").print(String.valueOf(modifiers)).println(",");
+
+        writer.print(".returnType = ");
+        writeType(method.getResultType());
+        writer.println(",");
+
+        var paramTypes = method.getParameterTypes();
+        if (paramTypes.length == 0) {
+            writer.println(".parameterTypes = NULL,");
+        } else {
+            writer.print(".parameterTypes = &(TeaVM_ClassArray) { .count = ")
+                    .print(String.valueOf(paramTypes.length)).println(", .data = {").indent();
+            writeType(paramTypes[0]);
+            for (var i = 1; i < paramTypes.length; ++i) {
+                writer.println(",");
+                writeType(paramTypes[i]);
+            }
+            writer.println().outdent().println("} },");
+        }
+
+        var callerName = names.forMethod(method.getReference()) + "@caller";
+        writer.print(".caller = &").print(callerName).println(",");
+
+        var methodAnnotations = extractMethodAnnotations(method);
+        if (methodAnnotations.isEmpty()) {
+            writer.println(".reflection = NULL,");
+        } else {
+            writer.print(".reflection = &(TeaVM_MethodReflection) {").indent();
+            writer.println(".annotations = ");
+            generateAnnotations(methodAnnotations);
+            writer.println().outdent().println(" },");
+        }
+
+        writer.println(".parameterNames = NULL");
+        writer.outdent().print("}");
+    }
+
+    private List<AnnotationReader> extractMethodAnnotations(MethodReader method) {
+        if (!context.getMetadataRequirements().hasGetAnnotations()) {
+            return List.of();
+        }
+        return AnnotationGenerationHelper.collectRuntimeAnnotations(context.getClassSource(),
+                method.getAnnotations().all());
     }
 }

@@ -129,6 +129,22 @@ public class Parser {
                     node.invisibleParameterAnnotations != null ? node.invisibleParameterAnnotations[i] : null);
         }
 
+        // Read parameter names from MethodParameters attribute (set by -parameters javac flag)
+        if (node.parameters != null && node.parameters.size() == method.parameterCount()) {
+            String[] names = new String[method.parameterCount()];
+            boolean hasAny = false;
+            for (int i = 0; i < method.parameterCount(); ++i) {
+                String name = node.parameters.get(i).name;
+                names[i] = name;
+                if (name != null) {
+                    hasAny = true;
+                }
+            }
+            if (hasAny) {
+                method.setParameterNames(names);
+            }
+        }
+
         if (node.signature != null) {
             parseMethodGenericSignature(node.signature, method);
         }

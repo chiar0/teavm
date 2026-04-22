@@ -33,6 +33,7 @@ class CachedMethod extends CachedMember implements MethodReader {
     GenericValueType genericReturnType;
     GenericValueType[] genericParameterTypes;
     CachedAnnotations[] parameterAnnotations;
+    String[] parameterNames;
     AnnotationValue annotationDefault;
     WeakReference<ProgramReader> program;
     Supplier<ProgramReader> programSupplier;
@@ -118,5 +119,10 @@ class CachedMethod extends CachedMember implements MethodReader {
     @Override
     public AnnotationValue getAnnotationDefault() {
         return annotationDefault;
+    }
+
+    @Override
+    public String[] getParameterNames() {
+        return parameterNames != null ? parameterNames.clone() : null;
     }
 }
