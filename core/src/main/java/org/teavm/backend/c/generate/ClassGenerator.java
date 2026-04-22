@@ -101,6 +101,7 @@ public class ClassGenerator {
     private static final int VT_STRUCTURE_INITIALIZER_DEPTH_THRESHOLD = 9;
     private Set<ValueType> types;
     private ClassReflectionGenerator reflectionGenerator;
+    private MethodReflectionCallerGenerator callerGenerator;
 
     public ClassGenerator(GenerationContext context, TagRegistry tagRegistry, Decompiler decompiler,
             CacheStatus cacheStatus, Set<ValueType> types, ReflectionDependencyListener reflection) {
@@ -110,6 +111,8 @@ public class ClassGenerator {
         this.cacheStatus = cacheStatus;
         this.types = types;
         reflectionGenerator = new ClassReflectionGenerator(context, reflection, types);
+        callerGenerator = new MethodReflectionCallerGenerator(context, null, null, reflection,
+                context.getClassInitializerInfo());
     }
 
     public void setAstCache(MethodNodeCache astCache) {
@@ -370,6 +373,12 @@ public class ClassGenerator {
             }
 
             codeGenerator.generateMethod(methodNode);
+
+            if (callerGenerator != null && callerGenerator.needsCaller(method)) {
+                callerGenerator.setWriter(codeWriter);
+                callerGenerator.setIncludes(includes);
+                callerGenerator.generateCaller(method);
+            }
 
             if (context.isIncremental()) {
                 generateCallSites(method.getReference(), callSites);

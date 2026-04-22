@@ -38,4 +38,10 @@ public final class MethodReflectionInfo extends ReflectionInfo {
 
     @Unmanaged
     public native TypeVariableInfo typeParameter(int index);
+
+    @Unmanaged
+    public native int parameterAnnotationCount(int paramIndex);
+
+    @Unmanaged
+    public native AnnotationInfo parameterAnnotation(int paramIndex, int annotationIndex);
 }

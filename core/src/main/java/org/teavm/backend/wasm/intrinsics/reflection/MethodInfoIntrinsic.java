@@ -64,6 +64,15 @@ public class MethodInfoIntrinsic implements WasmGCIntrinsic {
                 var receiver = context.generate(invocation.getArguments().get(0));
                 return new WasmStructGet(infoStruct.structure(), receiver, infoStruct.reflectionIndex());
             }
+            case "parameterName": {
+                var receiver = context.generate(invocation.getArguments().get(0));
+                var index = context.generate(invocation.getArguments().get(1));
+                var namesField = new WasmStructGet(infoStruct.structure(), receiver,
+                        infoStruct.parameterNamesIndex());
+                var strArrayType = context.classInfoProvider().reflectionTypes().arrayTypeOf(
+                        context.classInfoProvider().getClassInfo("java.lang.String").getType().asStorage());
+                return new WasmArrayGet(strArrayType, namesField, index);
+            }
             default:
                 throw new IllegalArgumentException(invocation.getMethod().getName());
         }

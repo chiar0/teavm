@@ -120,6 +120,9 @@ class WasmGCVirtualTableBuilder {
             return;
         }
         var itf = tableMap.get(interfaceName);
+        if (itf == null) {
+            return;
+        }
         if (!itf.commonImplementorFilled) {
             itf.commonImplementorFilled = true;
             itf.commonImplementor = newImplementor.parent;

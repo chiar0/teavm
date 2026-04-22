@@ -241,22 +241,12 @@ public class ReflectionMetadataGenerator {
             }
 
             if (fieldInfoStruct.readerIndex() >= 0) {
-                if (reflection.isRead(field.getReference())) {
-                    var getter = generateGetter(field);
-                    fieldInit.getInitializers().add(new WasmFunctionReference(getter));
-                } else {
-                    var readerType = classInfoProvider.reflectionTypes().fieldInfo().readerType();
-                    fieldInit.getInitializers().add(new WasmNullConstant(readerType.getReference()));
-                }
+                var getter = generateGetter(field);
+                fieldInit.getInitializers().add(new WasmFunctionReference(getter));
             }
             if (fieldInfoStruct.writerIndex() >= 0) {
-                if (reflection.isWritten(field.getReference())) {
-                    var setter = generateSetter(field);
-                    fieldInit.getInitializers().add(new WasmFunctionReference(setter));
-                } else {
-                    var writerType = classInfoProvider.reflectionTypes().fieldInfo().writerType();
-                    fieldInit.getInitializers().add(new WasmNullConstant(writerType.getReference()));
-                }
+                var setter = generateSetter(field);
+                fieldInit.getInitializers().add(new WasmFunctionReference(setter));
             }
             if (fieldInfoStruct.reflectionIndex() >= 0) {
                 fieldInit.getInitializers().add(generateFieldReflection(field));
@@ -365,6 +355,30 @@ public class ReflectionMetadataGenerator {
             if (methodInfoStruct.reflectionIndex() >= 0) {
                 methodInit.getInitializers().add(generateMethodReflection(method));
             }
+
+            if (methodInfoStruct.parameterNamesIndex() >= 0) {
+                var paramNames = method.getParameterNames();
+                if (paramNames != null) {
+                    var strArrayType = classInfoProvider.reflectionTypes().arrayTypeOf(
+                            classInfoProvider.getClassInfo("java.lang.String").getType().asStorage());
+                    var namesArray = new WasmArrayNewFixed(strArrayType);
+                    for (var name : paramNames) {
+                        if (name != null) {
+                            namesArray.getElements().add(
+                                    new WasmGetGlobal(strings.getStringConstant(name).global));
+                        } else {
+                            namesArray.getElements().add(new WasmNullConstant(
+                                    classInfoProvider.getClassInfo("java.lang.String").getType()));
+                        }
+                    }
+                    methodInit.getInitializers().add(namesArray);
+                } else {
+                    methodInit.getInitializers().add(new WasmNullConstant(
+                            classInfoProvider.reflectionTypes().arrayTypeOf(
+                                    classInfoProvider.getClassInfo("java.lang.String").getType().asStorage())
+                                    .getReference()));
+                }
+            }
         }
 
         return result;
@@ -385,9 +399,12 @@ public class ReflectionMetadataGenerator {
         var typeParameters = methodReflectionStruct.typeParametersIndex() >= 0
                 ? method.getTypeParameters()
                 : null;
+        var hasParamAnnotations = methodReflectionStruct.parameterAnnotationsIndex() >= 0
+                && method.parameterCount() > 0;
         if (annotations.isEmpty() && genericReturnType == null
                 && (genericParameterTypes == null || genericParameterTypes.length == 0)
-                && (typeParameters == null || typeParameters.length == 0)) {
+                && (typeParameters == null || typeParameters.length == 0)
+                && !hasParamAnnotations) {
             return new WasmNullConstant(methodReflectionStruct.structure().getReference());
         }
 
@@ -433,7 +450,52 @@ public class ReflectionMetadataGenerator {
             }
         }
 
+        if (methodReflectionStruct.parameterAnnotationsIndex() >= 0) {
+            result.getInitializers().add(generateParameterAnnotations(method));
+        }
+
         return result;
+    }
+
+    private WasmExpression generateParameterAnnotations(MethodReader method) {
+        var reflectionTypes = classInfoProvider.reflectionTypes();
+        var innerArrayType = reflectionTypes.annotationInfo().array();
+        var innerStorageType = innerArrayType.getReference().asStorage();
+        var outerArrayType = reflectionTypes.arrayTypeOf(innerStorageType);
+
+        var paramCount = method.parameterCount();
+        if (paramCount == 0) {
+            return new WasmNullConstant(outerArrayType.getReference());
+        }
+
+        var outerArray = new WasmArrayNewFixed(outerArrayType);
+        var paramAnnotations = method.getParameterAnnotations();
+        for (var i = 0; i < paramCount; ++i) {
+            var paramAnnotContainer = paramAnnotations[i];
+            var runtimeAnnot = AnnotationGenerationHelper.collectRuntimeAnnotations(
+                    classes, paramAnnotContainer.all());
+            if (runtimeAnnot.isEmpty()) {
+                outerArray.getElements().add(new WasmNullConstant(innerArrayType.getReference()));
+            } else {
+                var innerArray = new WasmArrayNewFixed(innerArrayType);
+                for (var annotation : runtimeAnnot) {
+                    innerArray.getElements().add(generateSingleAnnotation(annotation));
+                }
+                outerArray.getElements().add(innerArray);
+            }
+        }
+
+        return outerArray;
+    }
+
+    private WasmExpression generateSingleAnnotation(AnnotationReader annotation) {
+        var annotationInfoStruct = classInfoProvider.reflectionTypes().annotationInfo();
+        var elem = new WasmStructNew(annotationInfoStruct.structure());
+        elem.getInitializers().add(generateAnnotation(annotation));
+        var dataStruct = classInfoProvider.reflectionTypes().annotationData(annotation.getType());
+        dataStruct.constructor().setReferenced(true);
+        elem.getInitializers().add(new WasmFunctionReference(dataStruct.constructor()));
+        return elem;
     }
 
     private WasmExpression generateAnnotations(List<AnnotationReader> annotations) {

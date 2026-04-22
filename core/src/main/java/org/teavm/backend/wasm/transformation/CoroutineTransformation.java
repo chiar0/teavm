@@ -33,6 +33,7 @@ import org.teavm.backend.wasm.model.expression.WasmFloat64Constant;
 import org.teavm.backend.wasm.model.expression.WasmGetLocal;
 import org.teavm.backend.wasm.model.expression.WasmInt32Constant;
 import org.teavm.backend.wasm.model.expression.WasmInt64Constant;
+import org.teavm.backend.wasm.model.expression.WasmIsNull;
 import org.teavm.backend.wasm.model.expression.WasmNullConstant;
 import org.teavm.backend.wasm.model.expression.WasmReturn;
 import org.teavm.backend.wasm.model.expression.WasmSetLocal;
@@ -112,9 +113,18 @@ public class CoroutineTransformation {
             List<WasmLocal> locals) {
         var prologue = new ArrayList<WasmExpression>();
         prologue.add(new WasmSetLocal(fiberLocal, new WasmCall(coroutineFunctions.currentFiber())));
+
+        // Guard: if fiber is null (called from outside fiber system), skip fiber logic
+        var fiberNullCheck = new WasmConditional(new WasmIsNull(new WasmGetLocal(fiberLocal)));
+        prologue.add(fiberNullCheck);
+
+        // fiber == null: no fiber context, start fresh (state = 0)
+        fiberNullCheck.getThenBlock().getBody().add(new WasmSetLocal(stateLocal, new WasmInt32Constant(0)));
+
+        // fiber != null: check isResuming and restore state if resuming
         var restoreCond = new WasmConditional(new WasmCall(coroutineFunctions.isResuming(),
                 new WasmGetLocal(fiberLocal)));
-        prologue.add(restoreCond);
+        fiberNullCheck.getElseBlock().getBody().add(restoreCond);
         restoreCond.getElseBlock().getBody().add(new WasmSetLocal(stateLocal, new WasmInt32Constant(0)));
 
         var restoreBody = restoreCond.getThenBlock().getBody();
@@ -131,11 +141,18 @@ public class CoroutineTransformation {
     private List<WasmExpression> generateEpilogue(WasmLocal fiberLocal, WasmLocal stateLocal,
             List<WasmLocal> locals, WasmType returnType) {
         var epilogue = new ArrayList<WasmExpression>();
+
+        // Guard: only save state if fiber is non-null
+        var fiberNullCheck = new WasmConditional(new WasmIsNull(new WasmGetLocal(fiberLocal)));
+        // fiber == null: skip epilogue entirely (no fiber state to save)
+        // fiber != null: save state
         for (var local : locals) {
-            epilogue.add(coroutineFunctions.saveValue(local.getType(), fiberLocal, new WasmGetLocal(local)));
+            fiberNullCheck.getElseBlock().getBody().add(
+                    coroutineFunctions.saveValue(local.getType(), fiberLocal, new WasmGetLocal(local)));
         }
-        epilogue.add(new WasmCall(coroutineFunctions.pushInt(), new WasmGetLocal(stateLocal),
-                new WasmGetLocal(fiberLocal)));
+        fiberNullCheck.getElseBlock().getBody().add(new WasmCall(coroutineFunctions.pushInt(),
+                new WasmGetLocal(stateLocal), new WasmGetLocal(fiberLocal)));
+        epilogue.add(fiberNullCheck);
 
         if (returnType != null) {
             if (returnType instanceof WasmType.Number) {

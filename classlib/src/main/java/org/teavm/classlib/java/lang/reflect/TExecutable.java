@@ -135,6 +135,44 @@ public abstract class TExecutable extends TAccessibleObject implements TMember, 
         return typeParameters.clone();
     }
 
+    public TParameter[] getParameters() {
+        resolveParameterTypes();
+        var params = new TParameter[parameterTypes.length];
+        for (var i = 0; i < params.length; ++i) {
+            String name = "arg" + i;
+            if (methodInfo != null) {
+                var nameInfo = methodInfo.parameterName(i);
+                if (nameInfo != null) {
+                    name = nameInfo.toString();
+                }
+            }
+            params[i] = new TParameter(this, i, name, parameterTypes[i], 0);
+        }
+        return params;
+    }
+
+    public TAnnotation[][] getParameterAnnotations() {
+        resolveParameterTypes();
+        var reflection = methodInfo.reflection();
+        if (reflection == null) {
+            var result = new TAnnotation[parameterTypes.length][];
+            for (var i = 0; i < result.length; ++i) {
+                result[i] = new TAnnotation[0];
+            }
+            return result;
+        }
+        var result = new TAnnotation[parameterTypes.length][];
+        for (var i = 0; i < result.length; ++i) {
+            var count = reflection.parameterAnnotationCount(i);
+            result[i] = new TAnnotation[count];
+            for (var j = 0; j < count; ++j) {
+                result[i][j] = (TAnnotation) AnnotationInfoUtil.createAnnotation(
+                        reflection.parameterAnnotation(i, j));
+            }
+        }
+        return result;
+    }
+
     void validateArgs(Object[] args) {
         resolveParameterTypes();
         for (int i = 0; i < args.length; ++i) {

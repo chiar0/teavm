@@ -48,6 +48,7 @@ public class MethodInfoStruct {
     private int parameterTypesIndex = -1;
     private int callerIndex = -1;
     private int reflectionIndex = -1;
+    private int parameterNamesIndex = -1;
 
     private WasmFunctionType callerType;
 
@@ -101,6 +102,13 @@ public class MethodInfoStruct {
             var reflectionStruct = classInfoProvider.reflectionTypes().methodReflectionInfo().structure();
             fields.add(new WasmField(reflectionStruct, "reflection"));
         }
+        if (dependencies.getMethod(new MethodReference(MethodInfo.class, "parameterName", int.class,
+                StringInfo.class)) != null) {
+            parameterNamesIndex = fields.size();
+            var strArrayType = classInfoProvider.reflectionTypes().arrayTypeOf(
+                    classInfoProvider.getClassInfo("java.lang.String").getType().asStorage());
+            fields.add(new WasmField(strArrayType.getReference(), "parameterNames"));
+        }
     }
 
     public WasmStructure structure() {
@@ -144,6 +152,11 @@ public class MethodInfoStruct {
     public int reflectionIndex() {
         init();
         return reflectionIndex;
+    }
+
+    public int parameterNamesIndex() {
+        init();
+        return parameterNamesIndex;
     }
 
     public WasmFunctionType callerType() {

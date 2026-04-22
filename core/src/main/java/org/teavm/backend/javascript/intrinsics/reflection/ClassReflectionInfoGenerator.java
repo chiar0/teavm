@@ -19,6 +19,7 @@ import java.lang.annotation.Annotation;
 import java.lang.reflect.Executable;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Parameter;
 import java.lang.reflect.Type;
 import java.lang.reflect.TypeVariable;
 import java.util.ArrayList;
@@ -57,9 +58,11 @@ public class ClassReflectionInfoGenerator implements Injector {
     private boolean fieldAnnotationsRequired;
     private boolean fieldGenericTypeRequired;
     private boolean methodAnnotationsRequired;
+    private boolean methodParameterAnnotationsRequired;
     private boolean methodTypeParametersRequired;
     private boolean methodGenericReturnTypeRequired;
     private boolean methodGenericParamTypesRequired;
+    private boolean methodParameterNamesRequired;
     private boolean innerClassesRequired;
     private Set<String> innerClassesAccessed = new HashSet<>();
 
@@ -72,12 +75,16 @@ public class ClassReflectionInfoGenerator implements Injector {
                 Type.class)) != null;
         methodAnnotationsRequired = dependencyInfo.getMethod(new MethodReference(Executable.class,
                 "getDeclaredAnnotations", Annotation[].class)) != null;
+        methodParameterAnnotationsRequired = dependencyInfo.getMethod(new MethodReference(Executable.class,
+                "getParameterAnnotations", Annotation[][].class)) != null;
         methodTypeParametersRequired = dependencyInfo.getMethod(new MethodReference(Executable.class,
                 "getTypeParameters", TypeVariable[].class)) != null;
         methodGenericReturnTypeRequired = dependencyInfo.getMethod(new MethodReference(Method.class,
                 "getGenericReturnType", Type.class)) != null;
         methodGenericParamTypesRequired = dependencyInfo.getMethod(new MethodReference(Executable.class,
                 "getGenericParameterTypes", Type[].class)) != null;
+        methodParameterNamesRequired = dependencyInfo.getMethod(new MethodReference(Executable.class,
+                "getParameters", Parameter[].class)) != null;
 
         var classesMethod = dependencyInfo.getMethod(new MethodReference(Class.class, "getDeclaredClasses",
                 Class[].class));
@@ -194,6 +201,18 @@ public class ClassReflectionInfoGenerator implements Injector {
             AnnotationsGenerator.generate(writer, classes, annot);
         }
         writer.append("]");
+    }
+
+    private boolean hasParameterAnnotations(MethodReader method) {
+        for (var i = 0; i < method.parameterCount(); ++i) {
+            var anns = method.parameterAnnotation(i);
+            if (anns != null) {
+                for (var ann : anns.all()) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private ClassWithAnnotations collectAnnotations(ClassReaderSource classes, String className) {
@@ -362,7 +381,7 @@ public class ClassReflectionInfoGenerator implements Injector {
             writer.softNewLine();
             first = false;
             writer.append('[');
-            writer.append('"').append(RenderingUtil.escapeString(field.getName())).append("\",").ws();
+            writer.append("\"").append(RenderingUtil.escapeString(field.getName())).append("\",").ws();
             writer.append(ElementModifier.asModifiersInfo(field.readModifiers(), field.getLevel())).append(",").ws();
             RenderingUtil.typeToClsString(writer, field.getType());
             writer.append(',').ws();
@@ -434,7 +453,7 @@ public class ClassReflectionInfoGenerator implements Injector {
             writer.softNewLine();
             first = false;
             writer.append('[');
-            writer.append('"').append(RenderingUtil.escapeString(method.getName())).append("\",").ws();
+            writer.append("\"").append(RenderingUtil.escapeString(method.getName())).append("\",").ws();
             writer.append(ElementModifier.asModifiersInfo(method.readModifiers(), method.getLevel())).append(",").ws();
             RenderingUtil.typeToClsString(writer, method.getResultType());
             writer.append(',').ws();
@@ -458,8 +477,12 @@ public class ClassReflectionInfoGenerator implements Injector {
                     writer.append("0");
                 }
             } else {
-                writer.append("o").sameLineWs().append("=>").ws().append("o.")
-                        .appendVirtualMethod(method.getDescriptor());
+                if (reflection.isCalled(method.getReference())) {
+                    writer.append("o").sameLineWs().append("=>").ws().append("o.")
+                            .appendVirtualMethod(method.getDescriptor());
+                } else {
+                    writer.append("0");
+                }
             }
 
             var annotations = methodAnnotationsRequired
@@ -470,10 +493,16 @@ public class ClassReflectionInfoGenerator implements Injector {
             var genericReturnType = methodGenericReturnTypeRequired && !method.getName().equals("<init>")
                     ? method.getGenericResultType() : null;
             var genericParamTypes = methodGenericParamTypesRequired ? method.getGenericParameterTypes() : null;
+            var hasParamAnnotations = methodParameterAnnotationsRequired
+                    && hasParameterAnnotations(method);
+            var hasParamNames = methodParameterNamesRequired
+                    && method.getParameterNames() != null;
             if (!annotations.isEmpty()
                     || (typeParameters != null && typeParameters.length > 0)
                     || genericReturnType != null
-                    || genericParamTypes != null && genericParamTypes.length > 0) {
+                    || genericParamTypes != null && genericParamTypes.length > 0
+                    || hasParamAnnotations
+                    || hasParamNames) {
                 writer.append(',').ws().append('{');
                 var needsComma = false;
                 if (!annotations.isEmpty()) {
@@ -507,6 +536,41 @@ public class ClassReflectionInfoGenerator implements Injector {
                         generateGenericType(context, cls, method, genericParamTypes[j]);
                     }
                     writer.append(']');
+                }
+                if (hasParamAnnotations) {
+                    if (needsComma) {
+                        writer.append(',').ws();
+                    }
+                    writer.append("pa:").ws().append('[');
+                    var paramCount = method.parameterCount();
+                    for (var p = 0; p < paramCount; ++p) {
+                        if (p > 0) {
+                            writer.append(',').ws();
+                        }
+                        var paramAnns = AnnotationGenerationHelper.collectRuntimeAnnotations(
+                                context.getClassSource(), method.parameterAnnotation(p).all());
+                        generateAnnotations(writer, context.getClassSource(), paramAnns);
+                    }
+                    writer.append(']');
+                }
+                if (hasParamNames) {
+                    if (needsComma) {
+                        writer.append(',').ws();
+                    }
+                    writer.append("pn:").ws().append('[');
+                    var paramNames = method.getParameterNames();
+                    for (var p = 0; p < paramNames.length; ++p) {
+                        if (p > 0) {
+                            writer.append(',').ws();
+                        }
+                        if (paramNames[p] != null) {
+                            writer.append("\"").append(RenderingUtil.escapeString(paramNames[p])).append("\"");
+                        } else {
+                            writer.append("0");
+                        }
+                    }
+                    writer.append(']');
+                    needsComma = true;
                 }
                 writer.append('}');
             }

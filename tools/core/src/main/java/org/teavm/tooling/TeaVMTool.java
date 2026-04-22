@@ -125,6 +125,7 @@ public class TeaVMTool {
     private boolean heapDump;
     private boolean shortFileNames;
     private boolean assertionsRemoved;
+    private boolean emitOnErrors;
     private SourceMapBuilder wasmSourceMapWriter;
 
     public File getTargetDirectory() {
@@ -322,6 +323,10 @@ public class TeaVMTool {
         this.assertionsRemoved = assertionsRemoved;
     }
 
+    public void setEmitOnErrors(boolean emitOnErrors) {
+        this.emitOnErrors = emitOnErrors;
+    }
+
     public void setProgressListener(TeaVMProgressListener progressListener) {
         this.progressListener = progressListener;
     }
@@ -475,6 +480,7 @@ public class TeaVMTool {
             vm.setOptimizationLevel(!fastDependencyAnalysis && !incremental
                     ? optimizationLevel
                     : TeaVMOptimizationLevel.SIMPLE);
+            vm.setEmitOnErrors(emitOnErrors);
             if (incremental) {
                 vm.addVirtualMethods(m -> true);
             }

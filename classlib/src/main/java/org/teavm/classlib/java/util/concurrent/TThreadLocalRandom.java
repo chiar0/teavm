@@ -18,12 +18,15 @@ package org.teavm.classlib.java.util.concurrent;
 import org.teavm.classlib.java.util.TRandom;
 
 public class TThreadLocalRandom extends TRandom {
-    private static final TThreadLocalRandom current = new TThreadLocalRandom();
+    private static TThreadLocalRandom current;
 
     private TThreadLocalRandom() {
     }
 
     public static TThreadLocalRandom current() {
+        if (current == null) {
+            current = new TThreadLocalRandom();
+        }
         return current;
     }
 

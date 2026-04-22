@@ -85,6 +85,8 @@ public class ReflectionDependencyListener extends AbstractDependencyListener {
             Annotation[].class);
     private MethodReference getExecutableAnnotations = new MethodReference(Executable.class, "getDeclaredAnnotations",
             Annotation[].class);
+    private MethodReference getParameterAnnotations = new MethodReference(Executable.class,
+            "getParameterAnnotations", Annotation[][].class);
     private MethodReference getClassAnnotations = new MethodReference(Class.class, "getDeclaredAnnotations",
             Annotation[].class);
     private MethodReference forName = new MethodReference(Class.class, "forName", String.class, Boolean.class,
@@ -109,8 +111,10 @@ public class ReflectionDependencyListener extends AbstractDependencyListener {
     private Set<FieldReference> writtenFields = new HashSet<>();
     private List<FieldReader> fieldsReadViaReflection = new ArrayList<>();
     private List<MethodReader> methodsReadViaReflection = new ArrayList<>();
+
     private DependencyNode fieldsAnnotationsConsumer;
     private DependencyNode methodsAnnotationsConsumer;
+    private DependencyNode parameterAnnotationsConsumer;
 
     private boolean getReached;
     private boolean setReached;
@@ -280,6 +284,7 @@ public class ReflectionDependencyListener extends AbstractDependencyListener {
                     if (cls != null) {
                         var skipPrivates = shouldSkipPrivates(cls);
                         var reflectable = getAccessibleMethods(agent, className);
+                        List<MethodReader> reflectableMethodList = new ArrayList<>();
                         for (MethodReader reflectableMethod : cls.getMethods()) {
                             if (!reflectable.contains(reflectableMethod.getDescriptor())) {
                                 continue;
@@ -290,25 +295,38 @@ public class ReflectionDependencyListener extends AbstractDependencyListener {
                                     continue;
                                 }
                             }
-                            linkType(agent, reflectableMethod.getResultType());
-                            for (ValueType param : reflectableMethod.getParameterTypes()) {
-                                linkType(agent, param);
-                            }
-                            if (reflectableMethod.getGenericResultType() != null) {
-                                linkGenericType(agent, reflectableMethod.getGenericResultType());
-                            }
-                            var genericParamTypes = reflectableMethod.getGenericParameterTypes();
-                            if (genericParamTypes != null) {
-                                for (var param : genericParamTypes) {
-                                    linkGenericType(agent, param);
-                                }
-                            }
+                            reflectableMethodList.add(reflectableMethod);
                             if (methodsAnnotationsConsumer != null) {
                                 annotHelper.propagateAnnotationImplementations(agent,
                                         reflectableMethod.getAnnotations().all(),
                                         methodsAnnotationsConsumer);
                             }
                             methodsReadViaReflection.add(reflectableMethod);
+                            if (parameterAnnotationsConsumer != null) {
+                                for (int p = 0; p < reflectableMethod.parameterCount(); ++p) {
+                                    annotHelper.propagateAnnotationImplementations(agent,
+                                            reflectableMethod.parameterAnnotation(p).all(),
+                                            parameterAnnotationsConsumer);
+                                }
+                            }
+                        }
+
+                        var typesToLink = gatherMethodSignatureTypesToLink(agent, className);
+                        for (ValueType t : typesToLink) {
+                            linkType(agent, t);
+                        }
+                        if (!typesToLink.isEmpty()) {
+                            for (MethodReader rm : reflectableMethodList) {
+                                if (rm.getGenericResultType() != null) {
+                                    linkGenericType(agent, rm.getGenericResultType());
+                                }
+                                var genericParamTypes = rm.getGenericParameterTypes();
+                                if (genericParamTypes != null) {
+                                    for (var gpt : genericParamTypes) {
+                                        linkGenericType(agent, gpt);
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -320,12 +338,25 @@ public class ReflectionDependencyListener extends AbstractDependencyListener {
                 annotHelper.propagateAnnotationImplementations(agent, reflectableMethod.getAnnotations().all(),
                         methodsAnnotationsConsumer);
             }
+        } else if (method.getReference().equals(getParameterAnnotations)) {
+            parameterAnnotationsConsumer = method.getResult().getArrayItem().getArrayItem();
+            method.getResult().propagate(agent.getType(ValueType.parse(Annotation[][].class)));
+            method.getResult().getArrayItem().propagate(agent.getType(ValueType.parse(Annotation[].class)));
+            for (var reflectableMethod : methodsReadViaReflection) {
+                for (int p = 0; p < reflectableMethod.parameterCount(); ++p) {
+                    annotHelper.propagateAnnotationImplementations(agent,
+                            reflectableMethod.parameterAnnotation(p).all(),
+                            parameterAnnotationsConsumer);
+                }
+            }
         } else if (method.getReference().equals(getClassAnnotations)) {
             method.getVariable(0).getClassValueNode().addConsumer(type -> {
                 if (type.getValueType() instanceof ValueType.Object) {
                     var cls = agent.getClassSource().get(((ValueType.Object) type.getValueType()).getClassName());
-                    annotHelper.propagateAnnotationImplementations(agent, cls.getAnnotations().all(),
-                            method.getResult().getArrayItem());
+                    if (cls != null) {
+                        annotHelper.propagateAnnotationImplementations(agent, cls.getAnnotations().all(),
+                                method.getResult().getArrayItem());
+                    }
                 }
             });
         } else if (method.getReference().equals(forName) || method.getReference().equals(forNameShort)) {
@@ -430,6 +461,9 @@ public class ReflectionDependencyListener extends AbstractDependencyListener {
             var className = ((ValueType.Object) reflectedType.getValueType()).getClassName();
             Set<String> accessibleFields = getAccessibleFields(agent, className);
             ClassReader cls = agent.getClassSource().get(className);
+            if (cls == null) {
+                return;
+            }
             for (String fieldName : accessibleFields) {
                 FieldReader field = cls.getField(fieldName);
                 FieldDependency fieldDep = agent.linkField(field.getReference())
@@ -460,6 +494,9 @@ public class ReflectionDependencyListener extends AbstractDependencyListener {
             var className = ((ValueType.Object) reflectedType.getValueType()).getClassName();
             Set<String> accessibleFields = getAccessibleFields(agent, className);
             ClassReader cls = agent.getClassSource().get(className);
+            if (cls == null) {
+                return;
+            }
             for (String fieldName : accessibleFields) {
                 FieldReader field = cls.getField(fieldName);
                 FieldDependency fieldDep = agent.linkField(field.getReference()).addLocation(location);
@@ -562,6 +599,9 @@ public class ReflectionDependencyListener extends AbstractDependencyListener {
             var className = ((ValueType.Object) reflectedType.getValueType()).getClassName();
             Set<MethodDescriptor> accessibleMethods = getAccessibleMethods(agent, className);
             ClassReader cls = agent.getClassSource().get(className);
+            if (cls == null) {
+                return;
+            }
             for (MethodDescriptor methodDescriptor : accessibleMethods) {
                 if (methodDescriptor.getName().equals("<init>")) {
                     continue;
@@ -751,8 +791,12 @@ public class ReflectionDependencyListener extends AbstractDependencyListener {
     }
 
     private void linkType(DependencyAgent agent, ValueType type) {
-        typesInReflectableSignaturesNode.propagate(agent.getType(type));
-        linkClass(agent, type);
+        try {
+            typesInReflectableSignaturesNode.propagate(agent.getType(type));
+            linkClass(agent, type);
+        } catch (NullPointerException e) {
+            // type references a class not available in TeaVM's class source
+        }
     }
 
     private void linkClass(DependencyAgent agent, ValueType type) {
@@ -813,9 +857,32 @@ public class ReflectionDependencyListener extends AbstractDependencyListener {
         ReflectionContextImpl context = new ReflectionContextImpl(agent);
         Set<MethodDescriptor> methods = new LinkedHashSet<>();
         for (ReflectionSupplier supplier : reflectionSuppliers) {
-            methods.addAll(supplier.getAccessibleMethods(context, className));
+            try {
+                var result = supplier.getAccessibleMethods(context, className);
+                if (result != null) {
+                    methods.addAll(result);
+                }
+            } catch (Throwable ignored) {
+                // skip suppliers that fail
+            }
         }
         return methods;
+    }
+
+    private Set<ValueType> gatherMethodSignatureTypesToLink(DependencyAgent agent, String className) {
+        ReflectionContextImpl context = new ReflectionContextImpl(agent);
+        Set<ValueType> types = new LinkedHashSet<>();
+        for (ReflectionSupplier supplier : reflectionSuppliers) {
+            try {
+                var result = supplier.getMethodSignatureTypesToLink(context, className);
+                if (result != null) {
+                    types.addAll(result);
+                }
+            } catch (Throwable ignored) {
+                // skip suppliers that fail
+            }
+        }
+        return types;
     }
 
     private void propagateGet(DependencyAgent agent, ValueType type, DependencyNode sourceNode,
@@ -896,6 +963,34 @@ public class ReflectionDependencyListener extends AbstractDependencyListener {
             sourceNode.connect(unboxMethodDep.getResult());
         } else if (type instanceof ValueType.Array || type instanceof ValueType.Object) {
             sourceNode.connect(targetNode);
+        }
+    }
+
+    @Override
+    public void completing(DependencyAgent agent) {
+        proactivelyRegisterReflectableMethods(agent);
+    }
+
+    private void proactivelyRegisterReflectableMethods(DependencyAgent agent) {
+        if (reflectionSuppliers.isEmpty()) {
+            return;
+        }
+        var context = new ReflectionContextImpl(agent);
+        for (var className : new ArrayList<>(classesWithReflectableFields)) {
+            if (classesWithReflectableMethods.contains(className)) {
+                continue;
+            }
+            if (accessibleMethodCache.containsKey(className)) {
+                continue;
+            }
+            for (var supplier : reflectionSuppliers) {
+                var methods = supplier.getProactivelyAccessibleMethods(context, className);
+                if (methods != null && !methods.isEmpty()) {
+                    classesWithReflectableMethods.add(className);
+                    accessibleMethodCache.put(className, new LinkedHashSet<>(methods));
+                    break;
+                }
+            }
         }
     }
 

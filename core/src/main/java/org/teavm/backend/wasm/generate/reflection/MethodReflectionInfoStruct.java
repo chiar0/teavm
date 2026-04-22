@@ -36,6 +36,7 @@ public class MethodReflectionInfoStruct {
     private int genericParameterTypesIndex = -1;
     private int annotationsIndex = -1;
     private int typeParametersIndex = -1;
+    private int parameterAnnotationsIndex = -1;
 
     MethodReflectionInfoStruct(WasmGCNameProvider names, WasmModule module, DependencyInfo dependency,
             WasmGCClassInfoProvider classInfoProvider) {
@@ -70,6 +71,14 @@ public class MethodReflectionInfoStruct {
             var typeParamStruct = classInfoProvider.reflectionTypes().typeVariableInfo();
             fields.add(new WasmField(typeParamStruct.array(), "typeParameters"));
         }
+        if (dependency.getMethod(new MethodReference(MethodReflectionInfo.class, "parameterAnnotationCount",
+                int.class, int.class)) != null) {
+            parameterAnnotationsIndex = fields.size();
+            var innerArrayType = classInfoProvider.reflectionTypes().annotationInfo().array().getReference()
+                    .asStorage();
+            var outerArrayType = classInfoProvider.reflectionTypes().arrayTypeOf(innerArrayType).getReference();
+            fields.add(new WasmField(outerArrayType, "parameterAnnotations"));
+        }
     }
 
     public WasmStructure structure() {
@@ -94,6 +103,11 @@ public class MethodReflectionInfoStruct {
     public int typeParametersIndex() {
         init();
         return typeParametersIndex;
+    }
+
+    public int parameterAnnotationsIndex() {
+        init();
+        return parameterAnnotationsIndex;
     }
 
     private void init() {

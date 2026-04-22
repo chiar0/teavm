@@ -76,6 +76,32 @@ public class MethodReflectionInfoIntrinsic implements WasmGCIntrinsic {
                 var array = context.classInfoProvider().reflectionTypes().typeVariableInfo().array();
                 return new WasmArrayGet(array, params, index);
             }
+            case "parameterAnnotationCount": {
+                var receiver = context.generate(invocation.getArguments().get(0));
+                var paramIndex = context.generate(invocation.getArguments().get(1));
+                var infoStruct = context.classInfoProvider().reflectionTypes().methodReflectionInfo();
+                var paramAnnotations = new WasmStructGet(infoStruct.structure(), receiver,
+                        infoStruct.parameterAnnotationsIndex());
+                var innerArrayType = context.classInfoProvider().reflectionTypes().annotationInfo().array()
+                        .getReference().asStorage();
+                var outerArrayType = context.classInfoProvider().reflectionTypes().arrayTypeOf(innerArrayType);
+                var innerArray = new WasmArrayGet(outerArrayType, paramAnnotations, paramIndex);
+                return WasmGCGenerationUtil.getArrayLengthOfNullable(innerArray);
+            }
+            case "parameterAnnotation": {
+                var receiver = context.generate(invocation.getArguments().get(0));
+                var paramIndex = context.generate(invocation.getArguments().get(1));
+                var annotIndex = context.generate(invocation.getArguments().get(2));
+                var infoStruct = context.classInfoProvider().reflectionTypes().methodReflectionInfo();
+                var paramAnnotations = new WasmStructGet(infoStruct.structure(), receiver,
+                        infoStruct.parameterAnnotationsIndex());
+                var innerArrayType = context.classInfoProvider().reflectionTypes().annotationInfo().array()
+                        .getReference().asStorage();
+                var outerArrayType = context.classInfoProvider().reflectionTypes().arrayTypeOf(innerArrayType);
+                var innerArray = new WasmArrayGet(outerArrayType, paramAnnotations, paramIndex);
+                var annotArray = context.classInfoProvider().reflectionTypes().annotationInfo().array();
+                return new WasmArrayGet(annotArray, innerArray, annotIndex);
+            }
             default:
                 throw new IllegalStateException(invocation.getMethod().getName());
         }

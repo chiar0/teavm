@@ -201,6 +201,22 @@ public class ClassIO {
             annotationIO.writeAnnotations(output, parameterAnnotation);
         }
 
+        String[] paramNames = method.getParameterNames();
+        if (paramNames != null) {
+            output.writeUnsigned(1);
+            output.writeUnsigned(paramNames.length);
+            for (String name : paramNames) {
+                if (name != null) {
+                    output.writeUnsigned(1);
+                    output.writeUnsigned(symbolTable.lookup(name));
+                } else {
+                    output.writeUnsigned(0);
+                }
+            }
+        } else {
+            output.writeUnsigned(0);
+        }
+
         if (method.getAnnotationDefault() != null) {
             output.writeUnsigned(1);
             annotationIO.writeAnnotationValue(output, method.getAnnotationDefault());
@@ -233,6 +249,15 @@ public class ClassIO {
         method.parameterAnnotations = new CachedAnnotations[descriptor.parameterCount()];
         for (int i = 0; i < method.parameterCount(); ++i) {
             method.parameterAnnotations[i] = annotationIO.readAnnotations(input);
+        }
+
+        if (input.readUnsigned() != 0) {
+            int count = input.readUnsigned();
+            method.parameterNames = new String[count];
+            for (int i = 0; i < count; ++i) {
+                method.parameterNames[i] = input.readUnsigned() != 0
+                        ? symbolTable.at(input.readUnsigned()) : null;
+            }
         }
 
         if (input.readUnsigned() != 0) {

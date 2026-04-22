@@ -113,6 +113,56 @@ public class TField extends TAccessibleObject implements TMember {
         setWithoutCheck(obj, value);
     }
 
+    public void setInt(Object obj, int value) throws TIllegalArgumentException, TIllegalAccessException {
+        checkSetAccess();
+        checkInstance(obj);
+        setWithoutCheck(obj, value);
+    }
+
+    public void setLong(Object obj, long value) throws TIllegalArgumentException, TIllegalAccessException {
+        checkSetAccess();
+        checkInstance(obj);
+        setWithoutCheck(obj, value);
+    }
+
+    public void setShort(Object obj, short value) throws TIllegalArgumentException, TIllegalAccessException {
+        checkSetAccess();
+        checkInstance(obj);
+        setWithoutCheck(obj, value);
+    }
+
+    public void setByte(Object obj, byte value) throws TIllegalArgumentException, TIllegalAccessException {
+        checkSetAccess();
+        checkInstance(obj);
+        setWithoutCheck(obj, value);
+    }
+
+    public void setChar(Object obj, char value) throws TIllegalArgumentException, TIllegalAccessException {
+        checkSetAccess();
+        checkInstance(obj);
+        setWithoutCheck(obj, value);
+    }
+
+    public void setBoolean(Object obj, boolean value) throws TIllegalArgumentException,
+            TIllegalAccessException {
+        checkSetAccess();
+        checkInstance(obj);
+        setWithoutCheck(obj, value);
+    }
+
+    public void setFloat(Object obj, float value) throws TIllegalArgumentException, TIllegalAccessException {
+        checkSetAccess();
+        checkInstance(obj);
+        setWithoutCheck(obj, value);
+    }
+
+    public void setDouble(Object obj, double value) throws TIllegalArgumentException,
+            TIllegalAccessException {
+        checkSetAccess();
+        checkInstance(obj);
+        setWithoutCheck(obj, value);
+    }
+
     @Unmanaged
     public void setWithoutCheck(Object obj, Object value) {
         if ((fieldInfo.modifiers() & ModifiersInfo.STATIC) != 0) {

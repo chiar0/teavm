@@ -1,0 +1,155 @@
+/*
+ *  Copyright 2015 Alexey Andreev.
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *       http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ */
+package org.teavm.classlib.java.awt.geom;
+
+public abstract class TPoint2D implements Cloneable {
+
+    public abstract double getX();
+    public abstract double getY();
+    public abstract void setLocation(double x, double y);
+
+    public void setLocation(TPoint2D p) {
+        setLocation(p.getX(), p.getY());
+    }
+
+    public static double distanceSq(double x1, double y1, double x2, double y2) {
+        double dx = x2 - x1;
+        double dy = y2 - y1;
+        return dx * dx + dy * dy;
+    }
+
+    public static double distance(double x1, double y1, double x2, double y2) {
+        return Math.sqrt(distanceSq(x1, y1, x2, y2));
+    }
+
+    public double distanceSq(double px, double py) {
+        return distanceSq(getX(), getY(), px, py);
+    }
+
+    public double distanceSq(TPoint2D pt) {
+        return distanceSq(getX(), getY(), pt.getX(), pt.getY());
+    }
+
+    public double distance(double px, double py) {
+        return distance(getX(), getY(), px, py);
+    }
+
+    public double distance(TPoint2D pt) {
+        return distance(getX(), getY(), pt.getX(), pt.getY());
+    }
+
+    @Override
+    public Object clone() {
+        try {
+            return super.clone();
+        } catch (CloneNotSupportedException e) {
+            throw new InternalError(e);
+        }
+    }
+
+    @Override
+    public int hashCode() {
+        long bits = java.lang.Double.doubleToLongBits(getX());
+        bits ^= java.lang.Double.doubleToLongBits(getY()) * 31;
+        return (int) bits ^ (int) (bits >> 32);
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (obj instanceof TPoint2D) {
+            TPoint2D p = (TPoint2D) obj;
+            return getX() == p.getX() && getY() == p.getY();
+        }
+        return false;
+    }
+
+    public static class Double extends TPoint2D {
+        public double x;
+        public double y;
+
+        public Double() {
+            this.x = 0;
+            this.y = 0;
+        }
+
+        public Double(double x, double y) {
+            this.x = x;
+            this.y = y;
+        }
+
+        @Override
+        public double getX() {
+            return x;
+        }
+
+        @Override
+        public double getY() {
+            return y;
+        }
+
+        @Override
+        public void setLocation(double x, double y) {
+            this.x = x;
+            this.y = y;
+        }
+
+        @Override
+        public String toString() {
+            return "Point2D.Double[" + x + ", " + y + "]";
+        }
+    }
+
+    public static class Float extends TPoint2D {
+        public float x;
+        public float y;
+
+        public Float() {
+            this.x = 0;
+            this.y = 0;
+        }
+
+        public Float(float x, float y) {
+            this.x = x;
+            this.y = y;
+        }
+
+        @Override
+        public double getX() {
+            return (double) x;
+        }
+
+        @Override
+        public double getY() {
+            return (double) y;
+        }
+
+        @Override
+        public void setLocation(double x, double y) {
+            this.x = (float) x;
+            this.y = (float) y;
+        }
+
+        public void setLocation(float x, float y) {
+            this.x = x;
+            this.y = y;
+        }
+
+        @Override
+        public String toString() {
+            return "Point2D.Float[" + x + ", " + y + "]";
+        }
+    }
+}

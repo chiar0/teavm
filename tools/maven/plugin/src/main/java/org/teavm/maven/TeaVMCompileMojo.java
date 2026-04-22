@@ -133,6 +133,9 @@ public class TeaVMCompileMojo extends AbstractMojo {
     @Parameter(property = "teavm.stopOnErrors", defaultValue = "true")
     private boolean stopOnErrors = true;
 
+    @Parameter(property = "teavm.emitOnErrors", defaultValue = "false")
+    private boolean emitOnErrors;
+
     @Parameter(property = "teavm.optimizationLevel", defaultValue = "SIMPLE")
     private TeaVMOptimizationLevel optimizationLevel = TeaVMOptimizationLevel.SIMPLE;
 
@@ -210,6 +213,7 @@ public class TeaVMCompileMojo extends AbstractMojo {
             builder.setMaxDirectBuffersSize(maxDirectBuffersSize * 1024 * 1024);
             builder.setShortFileNames(shortFileNames);
             builder.setAssertionsRemoved(assertionsRemoved);
+            builder.setEmitOnErrors(emitOnErrors);
             builder.setImportedWasmMemory(importedWasmMemory);
         } catch (RuntimeException e) {
             throw new MojoExecutionException("Unexpected error occurred", e);

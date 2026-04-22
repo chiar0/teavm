@@ -691,7 +691,11 @@ public class AstWriter {
     }
 
     private void print(NumberLiteral node) {
-        writer.append(node.getValue());
+        String s = String.valueOf(node.getValue());
+        if (s.endsWith(".")) {
+            s = s + "0";
+        }
+        writer.append(s);
     }
 
     private void print(StringLiteral node) {

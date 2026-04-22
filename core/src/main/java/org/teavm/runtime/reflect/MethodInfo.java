@@ -39,4 +39,7 @@ public final class MethodInfo extends ReflectionInfo {
 
     @Unmanaged
     public native MethodReflectionInfo reflection();
+
+    @Unmanaged
+    public native StringInfo parameterName(int index);
 }

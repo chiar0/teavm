@@ -45,4 +45,6 @@ public interface MethodReader extends MemberReader {
     ProgramReader getProgram();
 
     AnnotationValue getAnnotationDefault();
+
+    String[] getParameterNames();
 }

@@ -50,6 +50,14 @@ public class MethodInfoGenerator implements Injector {
                 context.writeExpr(context.getArgument(1), Precedence.min());
                 context.getWriter().append("]");
                 break;
+            case "parameterName":
+                context.writeExpr(context.getArgument(0), Precedence.MEMBER_ACCESS);
+                context.getWriter().append(".parameterNames!=null?");
+                context.writeExpr(context.getArgument(0), Precedence.MEMBER_ACCESS);
+                context.getWriter().append(".parameterNames[");
+                context.writeExpr(context.getArgument(1), Precedence.min());
+                context.getWriter().append("]:null");
+                break;
         }
     }
 }

@@ -155,6 +155,7 @@ public class TeaVM implements TeaVMHost, ServiceRepository {
     private TeaVMOptimizationLevel optimizationLevel = TeaVMOptimizationLevel.SIMPLE;
     private TeaVMProgressListener progressListener;
     private boolean cancelled;
+    private boolean emitOnErrors;
     private ListableClassHolderSource writtenClasses;
     private TeaVMTarget target;
     private Map<Class<?>, TeaVMHostExtension> extensions = new HashMap<>();
@@ -279,6 +280,10 @@ public class TeaVM implements TeaVMHost, ServiceRepository {
 
     public void setOptimizationLevel(TeaVMOptimizationLevel optimizationLevel) {
         this.optimizationLevel = optimizationLevel;
+    }
+
+    public void setEmitOnErrors(boolean emitOnErrors) {
+        this.emitOnErrors = emitOnErrors;
     }
 
     public TeaVMProgressListener getProgressListener() {
@@ -425,7 +430,7 @@ public class TeaVM implements TeaVMHost, ServiceRepository {
             dependencyAnalyzer.addDependencyListener(new StdlibDependencyListener());
         }
         dependencyAnalyzer.processDependencies();
-        if (wasCancelled() || !diagnostics.getSevereProblems().isEmpty()) {
+        if (wasCancelled() || (!emitOnErrors && !diagnostics.getSevereProblems().isEmpty())) {
             return;
         }
 

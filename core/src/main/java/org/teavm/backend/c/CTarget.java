@@ -85,6 +85,8 @@ import org.teavm.backend.c.intrinsic.reflection.ClassInfoIntrinsic;
 import org.teavm.backend.c.intrinsic.reflection.ClassReflectionInfoIntrinsic;
 import org.teavm.backend.c.intrinsic.reflection.DerivedClassInfoIntrinsic;
 import org.teavm.backend.c.intrinsic.reflection.FieldInfoIntrinsic;
+import org.teavm.backend.c.intrinsic.reflection.MethodInfoIntrinsic;
+import org.teavm.backend.c.intrinsic.reflection.MethodReflectionInfoIntrinsic;
 import org.teavm.backend.c.intrinsic.reflection.StringInfoIntrinsic;
 import org.teavm.backend.c.transform.CFileSystemTransformer;
 import org.teavm.backend.lowlevel.analyze.LowLevelInliningFilterFactory;
@@ -425,6 +427,8 @@ public class CTarget implements TeaVMTarget, TeaVMCHost {
         intrinsics.add(new AnnotationValueArrayIntrinsic());
         intrinsics.add(new DerivedClassInfoIntrinsic());
         intrinsics.add(new FieldInfoIntrinsic());
+        intrinsics.add(new MethodInfoIntrinsic());
+        intrinsics.add(new MethodReflectionInfoIntrinsic());
 
         List<Generator> generators = new ArrayList<>();
         generators.add(new ArrayGenerator());
