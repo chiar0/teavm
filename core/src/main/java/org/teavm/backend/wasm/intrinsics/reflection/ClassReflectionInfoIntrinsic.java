@@ -24,6 +24,8 @@ import org.teavm.backend.wasm.intrinsics.WasmGCIntrinsicContext;
 import org.teavm.backend.wasm.model.WasmArray;
 import org.teavm.backend.wasm.model.expression.WasmArrayGet;
 import org.teavm.backend.wasm.model.expression.WasmExpression;
+import org.teavm.backend.wasm.model.expression.WasmInt32Constant;
+import org.teavm.backend.wasm.model.expression.WasmNullConstant;
 import org.teavm.backend.wasm.model.expression.WasmStructGet;
 
 public class ClassReflectionInfoIntrinsic implements WasmGCIntrinsic {
@@ -68,18 +70,26 @@ public class ClassReflectionInfoIntrinsic implements WasmGCIntrinsic {
 
     private WasmExpression collectionCount(InvocationExpr invocation, WasmGCIntrinsicContext context,
             ToIntFunction<ClassReflectionInfoStruct> fieldIndex) {
-        var receiver = context.generate(invocation.getArguments().get(0));
         var infoStruct = context.classInfoProvider().reflectionTypes().classReflectionInfo();
-        var annotations = new WasmStructGet(infoStruct.structure(), receiver, fieldIndex.applyAsInt(infoStruct));
-        return WasmGCGenerationUtil.getArrayLengthOfNullable(annotations);
+        int idx = fieldIndex.applyAsInt(infoStruct);
+        if (idx < 0) {
+            return new WasmInt32Constant(0);
+        }
+        var receiver = context.generate(invocation.getArguments().get(0));
+        var collection = new WasmStructGet(infoStruct.structure(), receiver, idx);
+        return WasmGCGenerationUtil.getArrayLengthOfNullable(collection);
     }
 
     private WasmExpression collectionElement(InvocationExpr invocation, WasmGCIntrinsicContext context,
             WasmArray array, ToIntFunction<ClassReflectionInfoStruct> fieldIndex) {
         var infoStruct = context.classInfoProvider().reflectionTypes().classReflectionInfo();
+        int idx = fieldIndex.applyAsInt(infoStruct);
+        if (idx < 0) {
+            return new WasmNullConstant(array.getReference());
+        }
         var receiver = context.generate(invocation.getArguments().get(0));
         var index = context.generate(invocation.getArguments().get(1));
-        var annotations = new WasmStructGet(infoStruct.structure(), receiver, fieldIndex.applyAsInt(infoStruct));
-        return new WasmArrayGet(array, annotations, index);
+        var collection = new WasmStructGet(infoStruct.structure(), receiver, idx);
+        return new WasmArrayGet(array, collection, index);
     }
 }

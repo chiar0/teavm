@@ -676,6 +676,7 @@ public final class TClass<T> extends TObject implements TGenericDeclaration, TTy
     }
 
     @Override
+    @PluggableDependency(ClassGenerator.class)
     public TAnnotation[] getDeclaredAnnotations() {
         if (declaredAnnotations == null) {
             var reflection = classInfo.reflection();
@@ -757,7 +758,8 @@ public final class TClass<T> extends TObject implements TGenericDeclaration, TTy
         if (reflection == null) {
             return new TClass<?>[0];
         }
-        var classes = new TClass<?>[reflection.innerClassCount()];
+        int count = reflection.innerClassCount();
+        var classes = new TClass<?>[count];
         for (var i = 0; i < classes.length; ++i) {
             classes[i] = (TClass<?>) (Object) reflection.innerClass(i).classObject();
         }

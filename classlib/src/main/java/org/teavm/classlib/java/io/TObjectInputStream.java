@@ -80,6 +80,10 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
 
     /** Running byte count, fed into diagnostic traces. */
     private int position;
+    /** Initial stream size for drift detection. */
+    private int initialStreamSize;
+    /** Count of type handler invocations. */
+    private int handlerCallCount;
 
     /** Ring buffer of the last N type-code reads (diagnostic on I/O errors). */
     private static final int TRACE_SIZE = 32;
@@ -222,9 +226,10 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
 
     public TObjectInputStream(InputStream in) throws IOException {
         this.in = in;
-        int magic = readShort();
-        int version = readShort();
-        if (magic != (int) TObjectOutputStream.STREAM_MAGIC) {
+        try { initialStreamSize = in.available(); } catch (Throwable t) { initialStreamSize = -1; }
+        int magic = readShort() & 0xFFFF;
+        int version = readShort() & 0xFFFF;
+        if (magic != TObjectOutputStream.STREAM_MAGIC) {
             throw new IOException("Invalid stream magic: 0x"
                     + Integer.toHexString(magic & 0xFFFF));
         }
@@ -376,7 +381,43 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
         }
     }
 
+    /**
+     * Read a complete object without delivering to parent frames.
+     * Type handlers MUST use this instead of {@link #readObject()} for
+     * nested reads, because {@code readObject()} delivers leaf values
+     * to the top-of-stack frame — which belongs to the handler's parent
+     * container, not the handler itself.
+     */
+    public Object readObjectUnframed() throws IOException, ClassNotFoundException {
+        int floor = frameTop;
+        while (true) {
+            Object value = readLeafOrStartContainer();
+            while (value != NEEDS_CHILDREN) {
+                if (frameTop <= floor) {
+                    return value;
+                }
+                value = deliverToFrame(frameStack[frameTop - 1], value);
+            }
+        }
+    }
+
+    /** Number of drift log lines emitted (capped to avoid flood). */
+    private int driftLogs;
+    private static final int MAX_DRIFT_LOGS = 20;
+
     private Object readLeafOrStartContainer() throws IOException, ClassNotFoundException {
+        // Drift detection: compare tracked position to actual ByteArrayInputStream position
+        if (initialStreamSize > 0 && driftLogs < MAX_DRIFT_LOGS) {
+            try {
+                int actualConsumed = initialStreamSize - in.available();
+                int drift = actualConsumed - position;
+                if (drift != 0) {
+                    System.out.println("[TIS-DRIFT] trackedPos=" + position
+                        + " actualConsumed=" + actualConsumed + " drift=" + drift);
+                    driftLogs++;
+                }
+            } catch (Throwable ignored) {}
+        }
         int tc = readByte();
         recordTrace(tc);
         chunkCounter++;  // Count every operation toward the chunk budget
@@ -387,6 +428,14 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
                 return readReference();
             case TC_STRING: {
                 String v = readUTF();
+                register(v);
+                return v;
+            }
+            case TC_LONGSTRING: {
+                int len = readInt();
+                byte[] bytes = new byte[len];
+                readFully(bytes);
+                String v = new String(bytes, "UTF-8");
                 register(v);
                 return v;
             }
@@ -452,14 +501,15 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
         // Try registered type handlers for custom type codes
         for (TypeHandler handler : typeHandlers) {
             if (handler.typeCode() == tc) {
+                handlerCallCount++;
                 Object result = handler.read(tc, this);
                 register(result);
                 return result;
             }
         }
 
-        throw new IOException(buildTraceMessage("Unknown type code: 0x"
-            + Integer.toHexString(tc & 0xFF)));
+        throw new IOException(buildTraceMessage("BADTC:0x"
+            + Integer.toHexString(tc & 0xFF) + " hc=" + handlerCallCount));
     }
 
     private Object deliverToFrame(Frame f, Object value) throws IOException {
@@ -1273,6 +1323,11 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
         int c3 = in.read();
         int c4 = in.read();
         if ((c1 | c2 | c3 | c4) < 0) {
+            int avail = 0;
+            try { avail = in.available(); } catch (Throwable ignored) {}
+            System.out.println("[TIS-EOF] readInt partial: c1=" + c1 + " c2=" + c2
+                + " c3=" + c3 + " c4=" + c4 + " trackedPos=" + position
+                + " in.available()=" + avail);
             throw new IOException("Unexpected end of stream");
         }
         position += 4;
@@ -1300,7 +1355,14 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
 
     public byte readByte() throws IOException {
         position++;
-        return (byte) in.read();
+        int b = in.read();
+        if (b < 0) {
+            int avail = 0;
+            try { avail = in.available(); } catch (Throwable ignored) {}
+            System.out.println("[TIS-EOF] readByte EOF at trackedPos=" + (position - 1)
+                + " in.available()=" + avail);
+        }
+        return (byte) b;
     }
 
     public int readUnsignedByte() throws IOException {
@@ -1333,8 +1395,8 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
     }
 
     public String readUTF() throws IOException {
-        int len = readShort();
-        if (len < 0) {
+        int len = readUnsignedShort();
+        if (len == 0xFFFF) {
             return null;
         }
         if (len == 0) {
@@ -1440,6 +1502,7 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
     private static final byte TC_ENUM      = TObjectOutputStream.TC_ENUM;
     private static final byte TC_BITSET    = TObjectOutputStream.TC_BITSET;
     private static final byte TC_SCHEMA    = TObjectOutputStream.TC_SCHEMA;
+    private static final byte TC_LONGSTRING = 0x62;
 
     // ── Schema manifest ──────────────────────────────────────────────────
 

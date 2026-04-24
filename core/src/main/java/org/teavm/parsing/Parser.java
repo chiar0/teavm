@@ -144,7 +144,6 @@ public class Parser {
                 method.setParameterNames(names);
             }
         }
-
         if (node.signature != null) {
             parseMethodGenericSignature(node.signature, method);
         }
