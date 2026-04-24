@@ -600,7 +600,7 @@ public class ReflectionMetadataGenerator {
             var className = ((ValueType.Object) type).getClassName();
             var cls = classes.get(className);
             if (cls == null) {
-                return null;
+                continue;
             }
             var annotations = AnnotationGenerationHelper.collectRuntimeAnnotations(classes,
                     cls.getAnnotations().all());
@@ -842,6 +842,9 @@ public class ReflectionMetadataGenerator {
     private WasmExpression generateTypeParameters(GenericTypeParameter[] params, ClassReader cls,
             MethodReader method) {
         var struct = classInfoProvider.reflectionTypes().typeVariableInfo();
+        if (params == null || params.length == 0) {
+            return new WasmArrayNewFixed(struct.array());
+        }
         var array = new WasmArrayNewFixed(struct.array());
         for (var param : params) {
             var arrayItem = new WasmStructNew(struct.structure());

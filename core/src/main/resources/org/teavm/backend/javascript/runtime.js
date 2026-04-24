@@ -187,7 +187,8 @@ let $rt_classReflectionMetadata = (cls) => {
             annotations: [],
             fields: [],
             methods: [],
-            typeParameters: []
+            typeParameters: [],
+            innerClasses: []
         };
     }
     return cls[$rt_meta].reflection;

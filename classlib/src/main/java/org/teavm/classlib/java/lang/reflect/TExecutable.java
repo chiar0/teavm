@@ -143,7 +143,7 @@ public abstract class TExecutable extends TAccessibleObject implements TMember, 
             if (methodInfo != null) {
                 var nameInfo = methodInfo.parameterName(i);
                 if (nameInfo != null) {
-                    name = nameInfo.toString();
+                    name = nameInfo.getStringObject();
                 }
             }
             params[i] = new TParameter(this, i, name, parameterTypes[i], 0);

@@ -40,7 +40,9 @@ public class MethodReflectionInfoGenerator implements Injector {
                 break;
             case "genericParameterTypeCount":
                 context.writeExpr(context.getArgument(0), Precedence.MEMBER_ACCESS);
-                context.getWriter().append(".genericParameterTypes.length");
+                context.getWriter().append(".genericParameterTypes?");
+                context.writeExpr(context.getArgument(0), Precedence.MEMBER_ACCESS);
+                context.getWriter().append(".genericParameterTypes.length:0");
                 break;
             case "genericParameterType":
                 context.writeExpr(context.getArgument(0), Precedence.MEMBER_ACCESS);
@@ -50,7 +52,9 @@ public class MethodReflectionInfoGenerator implements Injector {
                 break;
             case "typeParameterCount":
                 context.writeExpr(context.getArgument(0), Precedence.MEMBER_ACCESS);
-                context.getWriter().append(".typeParameters.length");
+                context.getWriter().append(".typeParameters?");
+                context.writeExpr(context.getArgument(0), Precedence.MEMBER_ACCESS);
+                context.getWriter().append(".typeParameters.length:0");
                 break;
             case "typeParameter":
                 context.writeExpr(context.getArgument(0), Precedence.MEMBER_ACCESS);
@@ -60,7 +64,11 @@ public class MethodReflectionInfoGenerator implements Injector {
                 break;
             case "parameterAnnotationCount":
                 context.writeExpr(context.getArgument(0), Precedence.MEMBER_ACCESS);
-                context.getWriter().append(".parameterAnnotations!=null?");
+                context.getWriter().append(".parameterAnnotations&&");
+                context.writeExpr(context.getArgument(0), Precedence.MEMBER_ACCESS);
+                context.getWriter().append(".parameterAnnotations[");
+                context.writeExpr(context.getArgument(1), Precedence.min());
+                context.getWriter().append("]?");
                 context.writeExpr(context.getArgument(0), Precedence.MEMBER_ACCESS);
                 context.getWriter().append(".parameterAnnotations[");
                 context.writeExpr(context.getArgument(1), Precedence.min());

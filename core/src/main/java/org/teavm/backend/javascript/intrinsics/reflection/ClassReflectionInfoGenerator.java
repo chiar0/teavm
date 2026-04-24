@@ -85,7 +85,6 @@ public class ClassReflectionInfoGenerator implements Injector {
                 "getGenericParameterTypes", Type[].class)) != null;
         methodParameterNamesRequired = dependencyInfo.getMethod(new MethodReference(Executable.class,
                 "getParameters", Parameter[].class)) != null;
-
         var classesMethod = dependencyInfo.getMethod(new MethodReference(Class.class, "getDeclaredClasses",
                 Class[].class));
         if (classesMethod != null) {
@@ -536,6 +535,7 @@ public class ClassReflectionInfoGenerator implements Injector {
                         generateGenericType(context, cls, method, genericParamTypes[j]);
                     }
                     writer.append(']');
+                    needsComma = true;
                 }
                 if (hasParamAnnotations) {
                     if (needsComma) {
@@ -552,6 +552,7 @@ public class ClassReflectionInfoGenerator implements Injector {
                         generateAnnotations(writer, context.getClassSource(), paramAnns);
                     }
                     writer.append(']');
+                    needsComma = true;
                 }
                 if (hasParamNames) {
                     if (needsComma) {

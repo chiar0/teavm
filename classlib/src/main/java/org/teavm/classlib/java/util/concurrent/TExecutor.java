@@ -15,8 +15,11 @@
  */
 package org.teavm.classlib.java.util.concurrent;
 
-import org.teavm.classlib.java.lang.TRunnable;
-
+/**
+ * TeaVM shim for java.util.concurrent.Executor.
+ * Minimal interface for executing Runnable tasks.
+ * In JavaScript, tasks run synchronously.
+ */
 public interface TExecutor {
-    void execute(TRunnable command);
+    void execute(Runnable command);
 }

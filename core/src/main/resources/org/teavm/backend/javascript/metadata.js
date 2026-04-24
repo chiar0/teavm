@@ -168,6 +168,8 @@ let $rt_reflection = data => {
             let innerClasses = obj.c;
             if (typeof innerClasses !== "undefined") {
                 clsData.innerClasses = innerClasses;
+            } else {
+                clsData.innerClasses = [];
             }
         }
     }
@@ -217,7 +219,7 @@ let $rt_readMethodMetadata = (cls, method) => {
                 resolvedGenericParameterTypes[i] = $rt_readGenericType(parameterTypes[i]);
             }
         } else {
-            resolvedGenericParameterTypes = null;
+            resolvedGenericParameterTypes = [];
         }
         let resolvedTypeParameters;
         let typeParameters = methodReflection.p;
@@ -236,6 +238,9 @@ let $rt_readMethodMetadata = (cls, method) => {
             typeParameters: resolvedTypeParameters,
             parameterAnnotations: methodReflection.pa !== void 0
                 ? methodReflection.pa.map(pa => $rt_readAnnotations(pa))
+                : [],
+            parameterNames: methodReflection.pn !== void 0
+                ? methodReflection.pn.map(pn => pn !== 0 ? pn : null)
                 : null
         }
     } else {
@@ -259,7 +264,9 @@ let $rt_readMethodMetadata = (cls, method) => {
         parameterTypes: parameterTypes,
         caller: caller,
         calledDirectly: (modifiers & 8) === 0 && ((modifiers & 2) !== 0 || name === '<init>'),
-        reflection: resolvedMethodReflection
+        reflection: resolvedMethodReflection,
+        parameterNames: resolvedMethodReflection !== null && resolvedMethodReflection.parameterNames !== void 0
+            ? resolvedMethodReflection.parameterNames : null
     };
 };
 let $rt_readAnnotations = annotations => {

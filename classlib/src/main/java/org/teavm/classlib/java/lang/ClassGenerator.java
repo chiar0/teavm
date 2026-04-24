@@ -15,6 +15,7 @@
  */
 package org.teavm.classlib.java.lang;
 
+import java.lang.annotation.Annotation;
 import org.teavm.dependency.DependencyAgent;
 import org.teavm.dependency.DependencyPlugin;
 import org.teavm.dependency.MethodDependency;
@@ -42,6 +43,9 @@ public class ClassGenerator implements DependencyPlugin {
                 break;
             case "getDeclaredClasses":
                 reachGetDeclaredClasses(agent, method);
+                break;
+            case "getDeclaredAnnotations":
+                reachGetDeclaredAnnotations(agent, method);
                 break;
             case "getEnumConstants":
                 reachGetEnumConstants(agent, method);
@@ -146,10 +150,26 @@ public class ClassGenerator implements DependencyPlugin {
 
             var className = ((ValueType.Object) type.getValueType()).getClassName();
             var cls = agent.getClassSource().get(className);
-            if (cls != null && cls.getParent() != null) {
+            if (cls != null) {
                 for (var innerClasses : cls.getInnerClasses()) {
                     method.getResult().getArrayItem().getClassValueNode()
                             .propagate(agent.getType(ValueType.object(innerClasses)));
+                }
+            }
+        });
+    }
+
+    private void reachGetDeclaredAnnotations(DependencyAgent agent, MethodDependency method) {
+        method.getResult().propagate(agent.getType(ValueType.parse(Annotation[].class)));
+        method.getVariable(0).getClassValueNode().addConsumer(type -> {
+            if (!(type.getValueType() instanceof ValueType.Object)) {
+                return;
+            }
+            var className = ((ValueType.Object) type.getValueType()).getClassName();
+            var cls = agent.getClassSource().get(className);
+            if (cls != null) {
+                for (var annotation : cls.getAnnotations().all()) {
+                    agent.linkClass(annotation.getType());
                 }
             }
         });

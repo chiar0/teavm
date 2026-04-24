@@ -139,6 +139,7 @@ public class ClassRefsRenamer extends AbstractInstructionVisitor {
         for (int i = 0; i < method.parameterCount(); ++i) {
             rename(method.parameterAnnotation(i), renamedMethod.parameterAnnotation(i));
         }
+        renamedMethod.setParameterNames(method.getParameterNames());
 
         if (renamedMethod.getProgram() != null) {
             rename(renamedMethod.getProgram());

@@ -167,8 +167,16 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
 
         // Handle by type (most specific first)
         if (obj instanceof String) {
-            writeByte(TC_STRING);
-            writeUTF((String) obj);
+            String s = (String) obj;
+            byte[] bytes = s.getBytes("UTF-8");
+            if (bytes.length > 65535) {
+                writeByte(TC_LONGSTRING);
+                writeInt(bytes.length);
+                out.write(bytes);
+            } else {
+                writeByte(TC_STRING);
+                writeUTF(s);
+            }
         } else if (obj instanceof Integer) {
             writeByte(TC_INTEGER);
             writeInt((Integer) obj);
@@ -639,6 +647,7 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
     static final byte TC_CHAR        = 0x5E;   // Character / char
     static final byte TC_BYTE        = 0x5F;   // Byte / byte
     static final byte TC_ENUM        = 0x60;   // Enum (ordinal follows)
+    static final byte TC_LONGSTRING  = 0x62;   // String > 64KB
     // ── Special-cased library types (no $meta.fields in TeaVM) ──
     static final byte TC_BITSET            = 0x61;   // java.util.BitSet
     static final byte TC_SCHEMA            = 0x67;   // schema manifest block
