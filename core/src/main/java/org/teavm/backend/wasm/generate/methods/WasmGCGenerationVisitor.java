@@ -641,8 +641,14 @@ public class WasmGCGenerationVisitor extends BaseWasmGenerationVisitor {
             }
             generateThrowCCE(expr.getLocation(), block.getBody());
         } else if (canInsertCast) {
-            result = new WasmCast(result, targetType);
-            result.setLocation(expr.getLocation());
+            var block = new WasmBlock(false);
+            block.setType(targetType.asBlock());
+            block.setLocation(expr.getLocation());
+            block.getBody().add(new WasmCastBranch(WasmCastCondition.SUCCESS, result, sourceType,
+                    targetType, block));
+            block.getBody().add(new WasmDrop(new WasmPop(sourceType)));
+            block.getBody().add(new WasmNullConstant(targetType));
+            result = block;
         }
     }
 
