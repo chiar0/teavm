@@ -22,8 +22,13 @@ import org.teavm.backend.wasm.model.WasmStorageType;
 import org.teavm.backend.wasm.model.WasmType;
 import org.teavm.backend.wasm.model.expression.WasmArrayGet;
 import org.teavm.backend.wasm.model.expression.WasmArrayLength;
-import org.teavm.backend.wasm.model.expression.WasmCast;
+import org.teavm.backend.wasm.model.expression.WasmBlock;
+import org.teavm.backend.wasm.model.expression.WasmCastBranch;
+import org.teavm.backend.wasm.model.expression.WasmCastCondition;
+import org.teavm.backend.wasm.model.expression.WasmDrop;
 import org.teavm.backend.wasm.model.expression.WasmExpression;
+import org.teavm.backend.wasm.model.expression.WasmNullConstant;
+import org.teavm.backend.wasm.model.expression.WasmPop;
 import org.teavm.backend.wasm.model.expression.WasmSignedType;
 
 public class AnnotationValueArrayIntrinsic implements WasmGCIntrinsic {
@@ -70,7 +75,15 @@ public class AnnotationValueArrayIntrinsic implements WasmGCIntrinsic {
         var arrayRef = context.generate(invocation.getArguments().get(0));
         var index = context.generate(invocation.getArguments().get(1));
         var array = context.classInfoProvider().reflectionTypes().arrayTypeOf(type);
-        var cast = new WasmCast(arrayRef, array.getReference());
+        var sourceType = context.classInfoProvider()
+                .getClassInfo("org.teavm.runtime.reflect.AnnotationValueArray").getType();
+        var check = new WasmBlock(false);
+        check.setType(array.getReference().asBlock());
+        check.getBody().add(new WasmCastBranch(WasmCastCondition.SUCCESS, arrayRef, sourceType,
+                array.getReference(), check));
+        check.getBody().add(new WasmDrop(new WasmPop(sourceType)));
+        check.getBody().add(new WasmNullConstant(array.getReference()));
+        var cast = check;
         var result = new WasmArrayGet(array, cast, index);
         result.setSignedType(signedType);
         return result;

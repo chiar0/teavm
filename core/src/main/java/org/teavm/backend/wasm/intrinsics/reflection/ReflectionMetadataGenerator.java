@@ -854,7 +854,14 @@ public class ReflectionMetadataGenerator {
         if (targetType == typeMapper.mapType(ValueType.object("java.lang.Object"))) {
             return expr;
         }
-        return new WasmCast(expr, (WasmType.Reference) targetType);
+        var sourceType = classInfoProvider.getClassInfo("java.lang.Object").getType();
+        var check = new WasmBlock(false);
+        check.setType(((WasmType.Reference) targetType).asBlock());
+        check.getBody().add(new WasmCastBranch(WasmCastCondition.SUCCESS, expr, sourceType,
+                (WasmType.Reference) targetType, check));
+        check.getBody().add(new WasmDrop(new WasmPop(sourceType)));
+        check.getBody().add(new WasmNullConstant((WasmType.Reference) targetType));
+        return check;
     }
 
     private WasmExpression unbox(Class<?> primitiveType, Class<?> wrapperType, WasmExpression expr) {

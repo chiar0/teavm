@@ -22,9 +22,15 @@ import org.teavm.backend.wasm.model.WasmLocal;
 import org.teavm.backend.wasm.model.WasmStructure;
 import org.teavm.backend.wasm.model.WasmType;
 import org.teavm.backend.wasm.model.expression.WasmCallReference;
+import org.teavm.backend.wasm.model.expression.WasmBlock;
 import org.teavm.backend.wasm.model.expression.WasmCast;
+import org.teavm.backend.wasm.model.expression.WasmCastBranch;
+import org.teavm.backend.wasm.model.expression.WasmCastCondition;
+import org.teavm.backend.wasm.model.expression.WasmDrop;
 import org.teavm.backend.wasm.model.expression.WasmExpression;
 import org.teavm.backend.wasm.model.expression.WasmGetLocal;
+import org.teavm.backend.wasm.model.expression.WasmNullConstant;
+import org.teavm.backend.wasm.model.expression.WasmPop;
 import org.teavm.backend.wasm.model.expression.WasmStructGet;
 import org.teavm.backend.wasm.model.expression.WasmUnreachable;
 import org.teavm.backend.wasm.vtable.WasmGCVirtualTableProvider;
@@ -72,7 +78,13 @@ public class WasmGCVirtualCallGenerator {
         var instanceType = (WasmType.CompositeReference) instance.getType();
         var instanceStruct = (WasmStructure) instanceType.composite;
         if (!expectedInstanceClassStruct.isSupertypeOf(instanceStruct)) {
-            instanceRef = new WasmCast(instanceRef, expectedInstanceClassStruct.getNonNullReference());
+            var check = new WasmBlock(false);
+            check.setType(expectedInstanceClassStruct.getNonNullReference().asBlock());
+            check.getBody().add(new WasmCastBranch(WasmCastCondition.SUCCESS, instanceRef, instanceType,
+                    expectedInstanceClassStruct.getNonNullReference(), check));
+            check.getBody().add(new WasmDrop(new WasmPop(instanceType)));
+            check.getBody().add(new WasmNullConstant(expectedInstanceClassStruct.getNonNullReference()));
+            instanceRef = check;
         }
 
         invoke.getArguments().add(instanceRef);

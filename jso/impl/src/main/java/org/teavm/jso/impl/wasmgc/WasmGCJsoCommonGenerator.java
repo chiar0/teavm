@@ -31,8 +31,12 @@ import org.teavm.backend.wasm.model.WasmGlobal;
 import org.teavm.backend.wasm.model.WasmLocal;
 import org.teavm.backend.wasm.model.WasmType;
 import org.teavm.backend.wasm.model.expression.WasmCall;
-import org.teavm.backend.wasm.model.expression.WasmCast;
+import org.teavm.backend.wasm.model.expression.WasmBlock;
+import org.teavm.backend.wasm.model.expression.WasmCastBranch;
+import org.teavm.backend.wasm.model.expression.WasmCastCondition;
+import org.teavm.backend.wasm.model.expression.WasmDrop;
 import org.teavm.backend.wasm.model.expression.WasmExpression;
+import org.teavm.backend.wasm.model.expression.WasmPop;
 import org.teavm.backend.wasm.model.expression.WasmExternConversion;
 import org.teavm.backend.wasm.model.expression.WasmExternConversionType;
 import org.teavm.backend.wasm.model.expression.WasmFunctionReference;
@@ -213,7 +217,12 @@ class WasmGCJsoCommonGenerator {
 
         var asAny = new WasmExternConversion(WasmExternConversionType.EXTERN_TO_ANY, new WasmGetLocal(exceptionLocal));
         var throwableType = (WasmType.Reference) context.typeMapper().mapType(ValueType.parse(Throwable.class));
-        var asThrowable = new WasmCast(asAny, throwableType);
+        var check = new WasmBlock(false);
+        check.setType(throwableType.asBlock());
+        check.getBody().add(new WasmCastBranch(WasmCastCondition.SUCCESS, asAny, WasmType.ANY, throwableType, check));
+        check.getBody().add(new WasmDrop(new WasmPop(WasmType.ANY)));
+        check.getBody().add(new WasmNullConstant(throwableType));
+        var asThrowable = check;
         var throwExpr = new WasmThrow(context.exceptionTag());
         throwExpr.getArguments().add(asThrowable);
         fn.getBody().add(throwExpr);
