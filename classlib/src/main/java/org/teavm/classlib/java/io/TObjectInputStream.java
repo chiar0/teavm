@@ -523,16 +523,6 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
                     if (fieldIdx >= 0 && fieldIdx < f.schema.fieldTypeDescriptors.length) {
                         typeDesc = f.schema.fieldTypeDescriptors[fieldIdx];
                     }
-                    // Diagnostic: log "moves" field handling
-                    if ("moves".equals(f.nextFieldName)) {
-                        System.out.println("[TObjectIS] moves on " + f.className
-                            + " idx=" + fieldIdx + "/" + f.schema.fieldNames.length
-                            + " typeDesc=" + typeDesc
-                            + " val=" + (value != null ? value.getClass().getName() : "null"));
-                    }
-                } else if ("moves".equals(f.nextFieldName)) {
-                    System.out.println("[TObjectIS] moves on " + f.className + " NO SCHEMA"
-                        + " val=" + (value != null ? value.getClass().getName() : "null"));
                 }
                 try {
                     setFieldSafely(f.container, f.nextFieldName, value, typeDesc);

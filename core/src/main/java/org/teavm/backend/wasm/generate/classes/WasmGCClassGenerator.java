@@ -436,8 +436,10 @@ public class WasmGCClassGenerator implements WasmGCClassInfoProvider, WasmGCInit
                         classInfo.initArrayFunction = getArrayConstructor(classInfo.getValueType());
                         classInfo.initArrayFunction.setReferenced(true);
                     }
-                    if (req.isAssignable() && !(type instanceof ValueType.Array)) {
-                        var supertypeFunction = supertypeGenerator.getIsSupertypeFunction(classInfo.getValueType());
+                    if (req.isAssignable()) {
+                        var supertypeFunction = type instanceof ValueType.Array
+                            ? supertypeGenerator.getIsArraySupertypeFunction()
+                            : supertypeGenerator.getIsSupertypeFunction(classInfo.getValueType());
                         supertypeFunction.setReferenced(true);
                         classInfo.supertypeFunction = supertypeFunction;
                     }
