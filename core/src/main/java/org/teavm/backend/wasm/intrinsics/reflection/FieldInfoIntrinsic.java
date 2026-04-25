@@ -15,12 +15,19 @@
  */
 package org.teavm.backend.wasm.intrinsics.reflection;
 
+import java.lang.IllegalAccessException;
 import org.teavm.ast.InvocationExpr;
 import org.teavm.backend.wasm.intrinsics.WasmGCIntrinsic;
 import org.teavm.backend.wasm.intrinsics.WasmGCIntrinsicContext;
+import org.teavm.backend.wasm.model.expression.WasmCall;
 import org.teavm.backend.wasm.model.expression.WasmCallReference;
+import org.teavm.backend.wasm.model.expression.WasmConditional;
 import org.teavm.backend.wasm.model.expression.WasmExpression;
+import org.teavm.backend.wasm.model.expression.WasmIsNull;
 import org.teavm.backend.wasm.model.expression.WasmStructGet;
+import org.teavm.backend.wasm.model.expression.WasmThrow;
+import org.teavm.backend.wasm.runtime.WasmGCSupport;
+import org.teavm.model.MethodReference;
 
 public class FieldInfoIntrinsic implements WasmGCIntrinsic {
     @Override
@@ -50,7 +57,18 @@ public class FieldInfoIntrinsic implements WasmGCIntrinsic {
                 var writer = new WasmStructGet(infoStruct.structure(), receiver, infoStruct.writerIndex());
                 var obj = context.generate(invocation.getArguments().get(1));
                 var value = context.generate(invocation.getArguments().get(2));
-                return new WasmCallReference(writer, infoStruct.writerType(), obj, value);
+
+                var conditional = new WasmConditional(new WasmIsNull(writer));
+                var iaeFn = context.functions().forStaticMethod(
+                        new MethodReference(WasmGCSupport.class, "iae", IllegalAccessException.class));
+                var throwExpr = new WasmThrow(context.exceptionTag());
+                throwExpr.getArguments().add(new WasmCall(iaeFn));
+                conditional.getThenBlock().getBody().add(throwExpr);
+
+                var writer2 = new WasmStructGet(infoStruct.structure(), receiver, infoStruct.writerIndex());
+                conditional.getElseBlock().getBody().add(
+                        new WasmCallReference(writer2, infoStruct.writerType(), obj, value));
+                return conditional;
             }
             case "reflection": {
                 var receiver = context.generate(invocation.getArguments().get(0));

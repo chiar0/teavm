@@ -83,7 +83,6 @@ import org.teavm.backend.wasm.vtable.WasmGCVirtualTableEntry;
 import org.teavm.backend.wasm.vtable.WasmGCVirtualTableProvider;
 import org.teavm.dependency.DependencyInfo;
 import org.teavm.interop.Structure;
-import org.teavm.model.AccessLevel;
 import org.teavm.model.ClassHierarchy;
 import org.teavm.model.ClassReader;
 import org.teavm.model.ClassReaderSource;
@@ -595,19 +594,19 @@ public class WasmGCClassGenerator implements WasmGCClassInfoProvider, WasmGCInit
                 }
                 if (!cls.hasModifier(ElementModifier.INTERFACE) && !cls.hasModifier(ElementModifier.ABSTRACT)
                         && !classInfo.isHeapStructure()) {
+                    var noArgConstructor = cls.getMethod(new MethodDescriptor("<init>", void.class));
+                    if (noArgConstructor != null && noArgConstructor.getProgram() == null) {
+                        noArgConstructor = null;
+                    }
                     if (classInfoCls.createInstanceIndex() >= 0) {
-                        var fn = createNewInstanceFunction(cls.getName(), classInfo);
+                        var fn = createNewInstanceFunction(cls.getName(), classInfo, noArgConstructor);
                         target.add(setClassField(classInfo, classInfoCls.createInstanceIndex(),
                                 new WasmFunctionReference(fn)));
                     }
-                    if (classInfoCls.initNewInstanceIndex() >= 0) {
-                        var defaultConstructor = cls.getMethod(new MethodDescriptor("<init>", void.class));
-                        if (defaultConstructor != null && defaultConstructor.getLevel() == AccessLevel.PUBLIC
-                                && defaultConstructor.getProgram() != null) {
-                            var fn = createInitNewInstanceFunction(defaultConstructor);
-                            target.add(setClassField(classInfo, classInfoCls.initNewInstanceIndex(),
-                                    new WasmFunctionReference(fn)));
-                        }
+                    if (classInfoCls.initNewInstanceIndex() >= 0 && noArgConstructor != null) {
+                        var fn = createNoopInitNewInstanceFunction(cls.getName());
+                        target.add(setClassField(classInfo, classInfoCls.initNewInstanceIndex(),
+                                new WasmFunctionReference(fn)));
                     }
                 }
             }
@@ -1489,6 +1488,12 @@ public class WasmGCClassGenerator implements WasmGCClassInfoProvider, WasmGCInit
         WasmStorageType wasmElementType;
         WasmArray wasmArray;
         if (elementType instanceof ValueType.Primitive) {
+            // Wasm GC only has i8, i16, i32, i64, f32, f64 storage types.
+            // Without nominal typing, structurally identical array types are aliased:
+            //   byte[] (i8) ≡ boolean[] (i8)
+            //   short[] (i16) ≡ char[] (i16)
+            // Setting nominal=true declares each array as a distinct nominal type so
+            // the Wasm engine does not merge them. See TEAVM-WORKAROUNDS.md §B.4.
             switch (((ValueType.Primitive) elementType).getKind()) {
                 case BOOLEAN:
                 case BYTE:
@@ -1515,6 +1520,7 @@ public class WasmGCClassGenerator implements WasmGCClassInfoProvider, WasmGCInit
             }
             var wasmArrayName = names.topLevel(names.suggestForType(classInfo.getValueType()) + "$Data");
             wasmArray = new WasmArray(wasmArrayName, wasmElementType);
+            wasmArray.setNominal(true);
             module.types.add(wasmArray);
         } else {
             wasmArray = getObjectArrayType();
@@ -1532,6 +1538,7 @@ public class WasmGCClassGenerator implements WasmGCClassInfoProvider, WasmGCInit
             var wasmArrayName = names.topLevel(names.suggestForType(ValueType.arrayOf(
                     ValueType.object("java.lang.Object"))) + "$Data");
             wasmArray = new WasmArray(wasmArrayName, wasmElementType);
+            wasmArray.setNominal(true);
             module.types.add(wasmArray);
             objectArrayType = wasmArray;
         }
@@ -1867,7 +1874,8 @@ public class WasmGCClassGenerator implements WasmGCClassInfoProvider, WasmGCInit
         return function;
     }
 
-    private WasmFunction createNewInstanceFunction(String className, WasmGCClassInfo classInfo) {
+    private WasmFunction createNewInstanceFunction(String className, WasmGCClassInfo classInfo,
+            MethodReader constructor) {
         var objCls = standardClasses.objectClass();
         var function = new WasmFunction(functionTypes.of(objCls.getType()));
         function.setName(names.topLevel(className + "@newInstance"));
@@ -1876,6 +1884,11 @@ public class WasmGCClassGenerator implements WasmGCClassInfoProvider, WasmGCInit
         function.getBody().add(new WasmSetLocal(resultLocal, new WasmStructNewDefault(classInfo.getStructure())));
         function.getBody().add(new WasmStructSet(objCls.getStructure(), new WasmGetLocal(resultLocal),
                 WasmGCClassInfoProvider.VT_FIELD_OFFSET, new WasmGetGlobal(classInfo.getVirtualTablePointer())));
+        if (constructor != null) {
+            function.getBody().add(new WasmCall(
+                    functionProvider.forInstanceMethod(constructor.getReference()),
+                    new WasmGetLocal(resultLocal)));
+        }
         function.getBody().add(new WasmGetLocal(resultLocal));
         function.setReferenced(true);
         module.functions.add(function);
@@ -1913,6 +1926,18 @@ public class WasmGCClassGenerator implements WasmGCClassInfoProvider, WasmGCInit
             );
             transformation.transform(instantiator);
         }
+
+        return instantiator;
+    }
+
+    private WasmFunction createNoopInitNewInstanceFunction(String className) {
+        var objectClass = getClassInfo("java.lang.Object");
+        var instantiatorType = functionTypes.of(null, objectClass.getType());
+
+        var instantiator = new WasmFunction(instantiatorType);
+        instantiator.setName(names.topLevel(className + "@initInstance"));
+        instantiator.setReferenced(true);
+        module.functions.add(instantiator);
 
         return instantiator;
     }

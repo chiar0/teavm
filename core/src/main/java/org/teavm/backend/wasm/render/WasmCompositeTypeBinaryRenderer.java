@@ -50,6 +50,10 @@ public class WasmCompositeTypeBinaryRenderer implements WasmCompositeTypeVisitor
 
     @Override
     public void visit(WasmArray type) {
+        if (type.isNominal()) {
+            section.writeByte(0x50);
+            section.writeLEB(0);
+        }
         section.writeByte(0x5E);
         writeStorageType(type.getElementType());
         section.writeLEB(type.isImmutable() ? 0 : 1);

@@ -86,10 +86,26 @@ let $rt_callDefaultConstructor = (cls, obj) => {
 }
 
 let $rt_getFieldValue = (field, obj) => {
-    return field.type[$rt_meta].valueToObject(field.reader(obj));
+    if (typeof field.reader !== "function") return null;
+    try {
+        let typeMeta = field.type[$rt_meta];
+        if (!typeMeta) return null;
+        return typeMeta.valueToObject(field.reader(obj));
+    } catch (e) { return null; }
 }
 let $rt_setFieldValue = (field, obj, value) => {
-    field.writer(obj, field.type[$rt_meta].objectToValue(value));
+    if (typeof field.writer !== "function") {
+        throw new Error("No writer for field: " + (field.name || "unknown"));
+    }
+    try {
+        let typeMeta = field.type[$rt_meta];
+        if (!typeMeta) {
+            throw new Error("No type metadata for field: " + (field.name || "unknown"));
+        }
+        field.writer(obj, typeMeta.objectToValue(value));
+    } catch (e) {
+        throw e;
+    }
 }
 let $rt_callMethod = (method, instance, args) => {
     let argsToPass = [];
@@ -99,9 +115,17 @@ let $rt_callMethod = (method, instance, args) => {
         argsToPass.push(instance);
     }
     for (let i = 0; i < args.data.length; ++i) {
-        argsToPass.push(method.parameterTypes[i][$rt_meta].objectToValue(args.data[i]));
+        let paramMeta = method.parameterTypes[i][$rt_meta];
+        if (!paramMeta) {
+            throw new Error("No parameter type metadata for method: " + (method.name || "unknown") + " param " + i);
+        }
+        argsToPass.push(paramMeta.objectToValue(args.data[i]));
     }
     let caller = isStatic || isCalledDirectly ? method.caller : method.caller(instance);
     let result = caller.apply(instance, argsToPass);
-    return method.returnType[$rt_meta].valueToObject(result);
+    let returnMeta = method.returnType[$rt_meta];
+    if (!returnMeta) {
+        throw new Error("No return type metadata for method: " + (method.name || "unknown"));
+    }
+    return returnMeta.valueToObject(result);
 }

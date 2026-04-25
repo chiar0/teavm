@@ -415,19 +415,11 @@ public class ClassReflectionInfoGenerator implements Injector {
     }
 
     private void renderGetter(SourceWriter writer, FieldReader field) {
-        if (!reflection.isRead(field.getReference())) {
-            writer.append("0");
-            return;
-        }
         writer.append("o").sameLineWs().append("=>").ws();
         fieldAccess(writer, field);
     }
 
     private void renderSetter(SourceWriter writer, FieldReader field) {
-        if (!reflection.isWritten(field.getReference())) {
-            writer.append("0");
-            return;
-        }
         writer.append("(o,").sameLineWs().append("v)").sameLineWs().append("=>").ws();
         fieldAccess(writer, field);
         writer.ws().append('=').ws().append("v");

@@ -517,12 +517,22 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
             case Frame.OBJECT_FIELDS: {
                 String typeDesc = null;
                 if (f.schema != null) {
-                    for (int i = 0; i < f.schema.fieldNames.length; i++) {
-                        if (f.nextFieldName.equals(f.schema.fieldNames[i])) {
-                            typeDesc = f.schema.fieldTypeDescriptors[i];
-                            break;
-                        }
+                    // Use position-based lookup to handle shadowed fields
+                    // (e.g. Seq.moves + Moves.moves both named "moves").
+                    int fieldIdx = f.schema.fieldNames.length - f.remaining;
+                    if (fieldIdx >= 0 && fieldIdx < f.schema.fieldTypeDescriptors.length) {
+                        typeDesc = f.schema.fieldTypeDescriptors[fieldIdx];
                     }
+                    // Diagnostic: log "moves" field handling
+                    if ("moves".equals(f.nextFieldName)) {
+                        System.out.println("[TObjectIS] moves on " + f.className
+                            + " idx=" + fieldIdx + "/" + f.schema.fieldNames.length
+                            + " typeDesc=" + typeDesc
+                            + " val=" + (value != null ? value.getClass().getName() : "null"));
+                    }
+                } else if ("moves".equals(f.nextFieldName)) {
+                    System.out.println("[TObjectIS] moves on " + f.className + " NO SCHEMA"
+                        + " val=" + (value != null ? value.getClass().getName() : "null"));
                 }
                 try {
                     setFieldSafely(f.container, f.nextFieldName, value, typeDesc);

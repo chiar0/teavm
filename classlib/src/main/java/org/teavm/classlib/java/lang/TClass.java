@@ -204,16 +204,24 @@ public final class TClass<T> extends TObject implements TGenericDeclaration, TTy
     }
 
     public TField[] getDeclaredFields() throws TSecurityException {
+        if (isPrimitive() || isArray()) {
+            return new TField[0];
+        }
         if (declaredFields == null) {
             var reflection = classInfo.reflection();
             if (reflection == null) {
-                declaredFields = new TField[0];
-            } else {
-                var count = reflection.fieldCount();
-                declaredFields = new TField[count];
-                for (int i = 0; i < count; ++i) {
-                    declaredFields[i] = new TField(this, reflection.field(i));
-                }
+                var className = classInfo.name();
+                var nameStr = className != null ? className.getStringObject() : "<unknown>";
+                throw new RuntimeException(
+                    "Class " + nameStr + " has no reflection metadata. "
+                    + "getDeclaredFields() requires the class to be in the TeaVM reflection metadata. "
+                    + "Ensure the class is reachable from the static call graph via getDeclaredFields() calls, "
+                    + "or register it in a ReflectionSupplier (e.g., LudiiReflectionSupplier).");
+            }
+            var count = reflection.fieldCount();
+            declaredFields = new TField[count];
+            for (int i = 0; i < count; ++i) {
+                declaredFields[i] = new TField(this, reflection.field(i));
             }
         }
         return declaredFields.clone();
@@ -542,6 +550,17 @@ public final class TClass<T> extends TObject implements TGenericDeclaration, TTy
     @PluggableDependency(ClassGenerator.class)
     public T[] getEnumConstants() {
         if (!isEnum()) {
+            // TeaVM: anonymous enum subclasses (e.g. AbsoluteDirection$1) do NOT
+            // have the ENUM modifier in JVM bytecode, so isEnum() returns false.
+            // However the declaring class (the actual enum) has the enum constants.
+            // Delegate to it so that getEnumConstants() works correctly on
+            // anonymous enum constants even when getClass().getEnumConstants()
+            // is called on a constant that overrides behaviour.
+            var declaringClass = getDeclaringClass();
+            if (declaringClass != null && declaringClass.isEnum()) {
+                var result = declaringClass.getEnumConstants();
+                return (T[]) result;
+            }
             return null;
         }
 

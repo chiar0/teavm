@@ -15,6 +15,7 @@
  */
 package org.teavm.backend.wasm.dependencies;
 
+import java.lang.IllegalAccessException;
 import java.util.Arrays;
 import java.util.List;
 import org.teavm.backend.wasm.WasmRuntime;
@@ -118,6 +119,7 @@ public class WasmGCDependencies {
         analyzer.linkMethod(new MethodReference(WasmGCSupport.class, "aiiobe", ArrayIndexOutOfBoundsException.class))
                 .use();
         analyzer.linkMethod(new MethodReference(WasmGCSupport.class, "cce", ClassCastException.class)).use();
+        analyzer.linkMethod(new MethodReference(WasmGCSupport.class, "iae", IllegalAccessException.class)).use();
         analyzer.linkMethod(new MethodReference(WasmGCSupport.class, "throwCloneNotSupportedException",
                 void.class)).use();
         analyzer.linkMethod(new MethodReference(WasmGCSupport.class, "defaultClone", Object.class, Object.class)).use();

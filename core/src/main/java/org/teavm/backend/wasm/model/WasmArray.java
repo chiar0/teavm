@@ -21,6 +21,7 @@ import java.util.function.Supplier;
 public class WasmArray extends WasmCompositeType {
     private WasmStorageType elementType;
     private boolean immutable;
+    private boolean nominal;
     private Supplier<WasmStorageType> elementTypeSupplier;
 
     public WasmArray(String name, WasmStorageType elementType) {
@@ -51,6 +52,14 @@ public class WasmArray extends WasmCompositeType {
 
     public void setImmutable(boolean immutable) {
         this.immutable = immutable;
+    }
+
+    public boolean isNominal() {
+        return nominal;
+    }
+
+    public void setNominal(boolean nominal) {
+        this.nominal = nominal;
     }
 
     @Override

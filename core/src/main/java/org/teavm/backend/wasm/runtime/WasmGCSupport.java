@@ -15,6 +15,7 @@
  */
 package org.teavm.backend.wasm.runtime;
 
+import java.lang.IllegalAccessException;
 import org.teavm.interop.Import;
 
 public class WasmGCSupport {
@@ -33,6 +34,10 @@ public class WasmGCSupport {
 
     public static ClassCastException cce() {
         return new ClassCastException();
+    }
+
+    public static IllegalAccessException iae() {
+        return new IllegalAccessException();
     }
 
     public static void throwCloneNotSupportedException() throws CloneNotSupportedException {
