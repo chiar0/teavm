@@ -552,7 +552,7 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
                 if (postDeserializeCallback != null) {
                     postDeserializeCallback.onObjectDeserialized(f.container);
                 }
-                return f.container;
+                return resolveObject(f.container);
             }
 
             case Frame.OBJECT_ARRAY: {
@@ -668,6 +668,26 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
 
     private void register(Object obj) {
         handleList.add(obj);
+    }
+
+    private Object resolveObject(Object obj) {
+        try {
+            java.lang.reflect.Method m = obj.getClass().getDeclaredMethod("readResolve");
+            m.setAccessible(true);
+            Object resolved = m.invoke(obj);
+            if (resolved != null && resolved != obj) {
+                for (int i = 0; i < handleList.size(); i++) {
+                    if (handleList.get(i) == obj) {
+                        handleList.set(i, resolved);
+                        break;
+                    }
+                }
+                return resolved;
+            }
+        } catch (NoSuchMethodException ignored) {
+        } catch (Throwable ignored) {
+        }
+        return obj;
     }
 
     private Object readReference() throws IOException {
@@ -875,7 +895,7 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
         register(obj);
 
         if (fieldCount == 0) {
-            return obj;
+            return resolveObject(obj);
         }
 
         String firstName = readUTF();
@@ -914,18 +934,22 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
 
     // ── Enum reader ──────────────────────────────────────────────────────────
 
-    private Object readEnum() throws IOException, ClassNotFoundException {
+    private Object readEnum() throws IOException {
         String className = readUTF();
-        int ordinal = readInt();
+        String constName = readUTF();
 
-        Object[] constants = tryGetEnumConstants(className);
+        Class<?> enumClass = null;
+        try {
+            enumClass = Class.forName(className);
+        } catch (Throwable ignored) {
+        }
 
-        // TeaVM 0.14 may create anonymous inner classes for enum constants
-        // (e.g. AbsoluteDirection$1). Strip trailing $<digits> suffixes until
-        // we find a resolvable enum class.
-        if (constants == null) {
+        if (enumClass == null) {
+            // TeaVM 0.14 may create anonymous inner classes for enum constants
+            // (e.g. AbsoluteDirection$1). Strip trailing $<digits> suffixes until
+            // we find a resolvable enum class.
             String name = className;
-            while (constants == null) {
+            while (enumClass == null) {
                 int dollar = name.lastIndexOf('$');
                 if (dollar < 0) {
                     break;
@@ -942,14 +966,29 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
                     break;
                 }
                 name = name.substring(0, dollar);
-                constants = tryGetEnumConstants(name);
+                try {
+                    enumClass = Class.forName(name);
+                } catch (Throwable ignored) {
+                }
             }
         }
 
-        if (constants != null && ordinal >= 0 && ordinal < constants.length) {
-            Object v = constants[ordinal];
-            register(v);
-            return v;
+        if (enumClass != null && enumClass.isEnum()) {
+            try {
+                java.lang.reflect.Method valueOf = enumClass.getMethod("valueOf", Class.class, String.class);
+                Object v = valueOf.invoke(null, enumClass, constName);
+                register(v);
+                return v;
+            } catch (Throwable t) {
+                // Fallback: try valueOf(String) which each enum class also has
+                try {
+                    java.lang.reflect.Method valueOf = enumClass.getMethod("valueOf", String.class);
+                    Object v = valueOf.invoke(null, constName);
+                    register(v);
+                    return v;
+                } catch (Throwable t2) {
+                }
+            }
         }
         register(null);
         return null;
@@ -1126,61 +1165,11 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
 
     /**
      * Coerce a value to match the target type. Handles primitive wrapper
-     * conversions and byte[] to primitive array conversions.
+     * conversions.
      */
     private static Object coerce(Class<?> ft, Object value) {
         if (value == null) {
             return null;
-        }
-
-        if (ft == boolean[].class && value instanceof byte[]) {
-            byte[] src = (byte[]) value;
-            boolean[] dst = new boolean[src.length];
-            for (int i = 0; i < src.length; i++) {
-                dst[i] = src[i] != 0;
-            }
-            return dst;
-        }
-
-        if (ft.isArray() && value instanceof byte[] && ft != byte[].class) {
-            byte[] src = (byte[]) value;
-            if (ft == int[].class) {
-                int[] dst = new int[src.length];
-                for (int i = 0; i < src.length; i++) {
-                    dst[i] = src[i];
-                }
-                return dst;
-            } else if (ft == long[].class) {
-                long[] dst = new long[src.length];
-                for (int i = 0; i < src.length; i++) {
-                    dst[i] = src[i];
-                }
-                return dst;
-            } else if (ft == short[].class) {
-                short[] dst = new short[src.length];
-                for (int i = 0; i < src.length; i++) {
-                    dst[i] = src[i];
-                }
-                return dst;
-            } else if (ft == float[].class) {
-                float[] dst = new float[src.length];
-                for (int i = 0; i < src.length; i++) {
-                    dst[i] = src[i];
-                }
-                return dst;
-            } else if (ft == double[].class) {
-                double[] dst = new double[src.length];
-                for (int i = 0; i < src.length; i++) {
-                    dst[i] = src[i];
-                }
-                return dst;
-            } else if (ft == char[].class) {
-                char[] dst = new char[src.length];
-                for (int i = 0; i < src.length; i++) {
-                    dst[i] = (char) src[i];
-                }
-                return dst;
-            }
         }
 
         if (ft == int.class) {
@@ -1287,31 +1276,6 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
             arr[index] = value;
         } catch (Throwable ignored) {
             // Incompatible type -- drop silently to avoid fatal trap
-        }
-    }
-
-    /** Cache of enum constant arrays keyed by class name. */
-    private static final Map<String, Object[]> ENUM_CACHE = new HashMap<>();
-
-    /**
-     * Get the enum constants for a class by name. Results are cached.
-     * Returns {@code null} if the class cannot be loaded or is not an enum.
-     */
-    @SuppressWarnings({ "rawtypes", "unchecked" })
-    private static Object[] tryGetEnumConstants(String className) {
-        Object[] cached = ENUM_CACHE.get(className);
-        if (cached != null) {
-            return cached;
-        }
-        try {
-            Class<? extends Enum> cls = (Class<? extends Enum>) Class.forName(className);
-            Object[] constants = cls.getEnumConstants();
-            if (constants != null) {
-                ENUM_CACHE.put(className, constants);
-            }
-            return constants;
-        } catch (Throwable e) {
-            return null;
         }
     }
 

@@ -300,7 +300,7 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
         } else if (obj instanceof Enum) {
             writeByte(TC_ENUM);
             writeUTF(canonicalEnumClassName((Enum<?>) obj, className));
-            writeInt(((Enum<?>) obj).ordinal());
+            writeUTF(((Enum<?>) obj).name());
             return true;
         } else if (obj instanceof boolean[]) {
             writeByte(TC_ARRAY);
@@ -865,7 +865,7 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
     static final byte TC_SHORT       = 0x5D;   // Short / short
     static final byte TC_CHAR        = 0x5E;   // Character / char
     static final byte TC_BYTE        = 0x5F;   // Byte / byte
-    static final byte TC_ENUM        = 0x60;   // Enum (ordinal follows)
+    static final byte TC_ENUM        = 0x7E;   // Enum (name follows)
     static final byte TC_LONGSTRING  = 0x62;   // String > 64KB
     // ── Special-cased library types (no $meta.fields in TeaVM) ──
     static final byte TC_BITSET            = 0x61;   // java.util.BitSet
