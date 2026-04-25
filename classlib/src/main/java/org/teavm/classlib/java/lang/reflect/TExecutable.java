@@ -72,9 +72,10 @@ public abstract class TExecutable extends TAccessibleObject implements TMember, 
 
     public TType[] getGenericParameterTypes() {
         if (genericParameterTypes == null) {
+            resolveParameterTypes();
             var reflection = methodInfo.reflection();
             if (reflection == null) {
-                genericParameterTypes = new TType[0];
+                genericParameterTypes = new TType[parameterTypes.length];
             } else {
                 genericParameterTypes = new TType[parameterTypes.length];
                 var count = reflection.genericParameterTypeCount();
