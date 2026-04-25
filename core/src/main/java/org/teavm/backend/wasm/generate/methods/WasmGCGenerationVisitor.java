@@ -729,7 +729,16 @@ public class WasmGCGenerationVisitor extends BaseWasmGenerationVisitor {
             if (targetType != null) {
                 var wasmTargetType = (WasmType.Reference) mapType(targetType.valueType);
                 if (!isExtern(wasmTargetType)) {
-                    result = new WasmCast(result, (WasmType.Reference) mapType(targetType.valueType));
+                    result.acceptVisitor(typeInference);
+                    var sourceType = (WasmType.Reference) typeInference.getSingleResult();
+                    var check = new WasmBlock(false);
+                    check.setType(wasmTargetType.asBlock());
+                    check.setLocation(expr.getLocation());
+                    check.getBody().add(new WasmCastBranch(WasmCastCondition.SUCCESS, result, sourceType,
+                            wasmTargetType, check));
+                    check.getBody().add(new WasmDrop(new WasmPop(sourceType)));
+                    check.getBody().add(new WasmNullConstant(wasmTargetType));
+                    result = check;
                 }
             }
         }
@@ -823,7 +832,15 @@ public class WasmGCGenerationVisitor extends BaseWasmGenerationVisitor {
             return expression;
         }
 
-        return new WasmCast(expression, expectedComposite.getReference());
+        var sourceType = (WasmType.Reference) actualType;
+        var targetType = expectedComposite.getReference();
+        var check = new WasmBlock(false);
+        check.setType(targetType.asBlock());
+        check.setLocation(expression.getLocation());
+        check.getBody().add(new WasmCastBranch(WasmCastCondition.SUCCESS, expression, sourceType, targetType, check));
+        check.getBody().add(new WasmDrop(new WasmPop(sourceType)));
+        check.getBody().add(new WasmNullConstant(targetType));
+        return check;
     }
 
     @Override

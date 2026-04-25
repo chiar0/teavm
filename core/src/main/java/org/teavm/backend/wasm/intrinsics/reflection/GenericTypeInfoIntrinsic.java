@@ -21,15 +21,21 @@ import org.teavm.backend.wasm.intrinsics.WasmGCIntrinsicContext;
 import org.teavm.backend.wasm.model.WasmFunction;
 import org.teavm.backend.wasm.model.WasmLocal;
 import org.teavm.backend.wasm.model.WasmType;
+import org.teavm.backend.wasm.model.expression.WasmBlock;
 import org.teavm.backend.wasm.model.expression.WasmCall;
 import org.teavm.backend.wasm.model.expression.WasmCast;
+import org.teavm.backend.wasm.model.expression.WasmCastBranch;
+import org.teavm.backend.wasm.model.expression.WasmCastCondition;
 import org.teavm.backend.wasm.model.expression.WasmConditional;
+import org.teavm.backend.wasm.model.expression.WasmDrop;
 import org.teavm.backend.wasm.model.expression.WasmExpression;
 import org.teavm.backend.wasm.model.expression.WasmGetLocal;
 import org.teavm.backend.wasm.model.expression.WasmInt32Constant;
 import org.teavm.backend.wasm.model.expression.WasmIntBinary;
 import org.teavm.backend.wasm.model.expression.WasmIntBinaryOperation;
 import org.teavm.backend.wasm.model.expression.WasmIntType;
+import org.teavm.backend.wasm.model.expression.WasmNullConstant;
+import org.teavm.backend.wasm.model.expression.WasmPop;
 import org.teavm.backend.wasm.model.expression.WasmReturn;
 import org.teavm.backend.wasm.model.expression.WasmStructGet;
 import org.teavm.backend.wasm.model.expression.WasmTest;
@@ -49,23 +55,58 @@ public class GenericTypeInfoIntrinsic implements WasmGCIntrinsic {
             }
             case "asParameterizedType": {
                 var receiver = context.generate(invocation.getArguments().get(0));
-                return new WasmCast(receiver, reflectionTypes.parameterizedTypeInfo().structure().getReference());
+                var targetType = reflectionTypes.parameterizedTypeInfo().structure().getReference();
+                var block = new WasmBlock(false);
+                block.setType(targetType.asBlock());
+                block.getBody().add(new WasmCastBranch(WasmCastCondition.SUCCESS, receiver,
+                        WasmType.STRUCT, targetType, block));
+                block.getBody().add(new WasmDrop(new WasmPop(WasmType.STRUCT)));
+                block.getBody().add(new WasmNullConstant(targetType));
+                return block;
             }
             case "asTypeVariable": {
                 var receiver = context.generate(invocation.getArguments().get(0));
-                return new WasmCast(receiver, reflectionTypes.typeVariableReference().structure().getReference());
+                var targetType = reflectionTypes.typeVariableReference().structure().getReference();
+                var block = new WasmBlock(false);
+                block.setType(targetType.asBlock());
+                block.getBody().add(new WasmCastBranch(WasmCastCondition.SUCCESS, receiver,
+                        WasmType.STRUCT, targetType, block));
+                block.getBody().add(new WasmDrop(new WasmPop(WasmType.STRUCT)));
+                block.getBody().add(new WasmNullConstant(targetType));
+                return block;
             }
             case "asGenericArray": {
                 var receiver = context.generate(invocation.getArguments().get(0));
-                return new WasmCast(receiver, reflectionTypes.genericArrayInfo().structure().getReference());
+                var targetType = reflectionTypes.genericArrayInfo().structure().getReference();
+                var block = new WasmBlock(false);
+                block.setType(targetType.asBlock());
+                block.getBody().add(new WasmCastBranch(WasmCastCondition.SUCCESS, receiver,
+                        WasmType.STRUCT, targetType, block));
+                block.getBody().add(new WasmDrop(new WasmPop(WasmType.STRUCT)));
+                block.getBody().add(new WasmNullConstant(targetType));
+                return block;
             }
             case "asWildcard": {
                 var receiver = context.generate(invocation.getArguments().get(0));
-                return new WasmCast(receiver, reflectionTypes.wildcardTypeInfo().structure().getReference());
+                var targetType = reflectionTypes.wildcardTypeInfo().structure().getReference();
+                var block = new WasmBlock(false);
+                block.setType(targetType.asBlock());
+                block.getBody().add(new WasmCastBranch(WasmCastCondition.SUCCESS, receiver,
+                        WasmType.STRUCT, targetType, block));
+                block.getBody().add(new WasmDrop(new WasmPop(WasmType.STRUCT)));
+                block.getBody().add(new WasmNullConstant(targetType));
+                return block;
             }
             case "asRawType": {
                 var receiver = context.generate(invocation.getArguments().get(0));
-                return new WasmCast(receiver, reflectionTypes.derivedClassInfo().structure().getReference());
+                var targetType = reflectionTypes.derivedClassInfo().structure().getReference();
+                var block = new WasmBlock(false);
+                block.setType(targetType.asBlock());
+                block.getBody().add(new WasmCastBranch(WasmCastCondition.SUCCESS, receiver,
+                        WasmType.STRUCT, targetType, block));
+                block.getBody().add(new WasmDrop(new WasmPop(WasmType.STRUCT)));
+                block.getBody().add(new WasmNullConstant(targetType));
+                return block;
             }
             default:
                 throw new IllegalArgumentException(invocation.getMethod().getName());

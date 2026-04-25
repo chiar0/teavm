@@ -39,9 +39,13 @@ import org.teavm.backend.wasm.model.WasmModule;
 import org.teavm.backend.wasm.model.WasmType;
 import org.teavm.backend.wasm.model.expression.WasmArrayGet;
 import org.teavm.backend.wasm.model.expression.WasmArrayNewFixed;
+import org.teavm.backend.wasm.model.expression.WasmBlock;
 import org.teavm.backend.wasm.model.expression.WasmCall;
 import org.teavm.backend.wasm.model.expression.WasmCallReference;
 import org.teavm.backend.wasm.model.expression.WasmCast;
+import org.teavm.backend.wasm.model.expression.WasmCastBranch;
+import org.teavm.backend.wasm.model.expression.WasmCastCondition;
+import org.teavm.backend.wasm.model.expression.WasmDrop;
 import org.teavm.backend.wasm.model.expression.WasmExpression;
 import org.teavm.backend.wasm.model.expression.WasmFloat32Constant;
 import org.teavm.backend.wasm.model.expression.WasmFloat64Constant;
@@ -51,6 +55,7 @@ import org.teavm.backend.wasm.model.expression.WasmGetLocal;
 import org.teavm.backend.wasm.model.expression.WasmInt32Constant;
 import org.teavm.backend.wasm.model.expression.WasmInt64Constant;
 import org.teavm.backend.wasm.model.expression.WasmNullConstant;
+import org.teavm.backend.wasm.model.expression.WasmPop;
 import org.teavm.backend.wasm.model.expression.WasmSetGlobal;
 import org.teavm.backend.wasm.model.expression.WasmSetLocal;
 import org.teavm.backend.wasm.model.expression.WasmSignedType;
@@ -641,8 +646,15 @@ public class ReflectionMetadataGenerator {
             var global = classInfoProvider.getStaticFieldLocation(field.getReference());
             result = new WasmGetGlobal(global);
         } else {
-            var castInstance = new WasmCast(new WasmGetLocal(thisVar), classInfo.getType());
-            var structGet = new WasmStructGet(classInfo.getStructure(), castInstance,
+            var getterSourceType = objectClass.getType();
+            var getterTargetType = classInfo.getType();
+            var getterBlock = new WasmBlock(false);
+            getterBlock.setType(getterTargetType.asBlock());
+            getterBlock.getBody().add(new WasmCastBranch(WasmCastCondition.SUCCESS,
+                    new WasmGetLocal(thisVar), getterSourceType, getterTargetType, getterBlock));
+            getterBlock.getBody().add(new WasmDrop(new WasmPop(getterSourceType)));
+            getterBlock.getBody().add(new WasmNullConstant(getterTargetType));
+            var structGet = new WasmStructGet(classInfo.getStructure(), getterBlock,
                     classInfoProvider.getFieldIndex(field.getReference()));
             if (field.getType() instanceof ValueType.Primitive) {
                 switch (((ValueType.Primitive) field.getType()).getKind()) {
@@ -686,8 +698,15 @@ public class ReflectionMetadataGenerator {
             var global = classInfoProvider.getStaticFieldLocation(field.getReference());
             function.getBody().add(new WasmSetGlobal(global, value));
         } else {
-            var castInstance = new WasmCast(new WasmGetLocal(thisVar), classInfo.getType());
-            var structSet = new WasmStructSet(classInfo.getStructure(), castInstance,
+            var setterSourceType = objectClass.getType();
+            var setterTargetType = classInfo.getType();
+            var setterBlock = new WasmBlock(false);
+            setterBlock.setType(setterTargetType.asBlock());
+            setterBlock.getBody().add(new WasmCastBranch(WasmCastCondition.SUCCESS,
+                    new WasmGetLocal(thisVar), setterSourceType, setterTargetType, setterBlock));
+            setterBlock.getBody().add(new WasmDrop(new WasmPop(setterSourceType)));
+            setterBlock.getBody().add(new WasmNullConstant(setterTargetType));
+            var structSet = new WasmStructSet(classInfo.getStructure(), setterBlock,
                     classInfoProvider.getFieldIndex(field.getReference()), value);
             function.getBody().add(structSet);
         }
@@ -731,8 +750,15 @@ public class ReflectionMetadataGenerator {
                     && !method.getName().equals("<init>");
 
             if (!virtual) {
-                var castInstance = new WasmCast(new WasmGetLocal(thisVar), classInfo.getType());
-                args.add(castInstance);
+                var callerSourceType = objectClass.getType();
+                var callerTargetType = classInfo.getType();
+                var callerBlock = new WasmBlock(false);
+                callerBlock.setType(callerTargetType.asBlock());
+                callerBlock.getBody().add(new WasmCastBranch(WasmCastCondition.SUCCESS,
+                        new WasmGetLocal(thisVar), callerSourceType, callerTargetType, callerBlock));
+                callerBlock.getBody().add(new WasmDrop(new WasmPop(callerSourceType)));
+                callerBlock.getBody().add(new WasmNullConstant(callerTargetType));
+                args.add(callerBlock);
                 callee = functions.forInstanceMethod(method.getReference());
             }
         }
@@ -835,8 +861,15 @@ public class ReflectionMetadataGenerator {
         var method = new MethodReference(wrapperType.getName(), primitiveType.getName() + "Value",
                 ValueType.parse(primitiveType));
         var function = functions.forInstanceMethod(method);
-        var cast = new WasmCast(expr, classInfoProvider.getClassInfo(wrapperType.getName()).getType());
-        return new WasmCall(function, cast);
+        var sourceType = classInfoProvider.getClassInfo("java.lang.Object").getType();
+        var targetType = classInfoProvider.getClassInfo(wrapperType.getName()).getType();
+        var unboxBlock = new WasmBlock(false);
+        unboxBlock.setType(targetType.asBlock());
+        unboxBlock.getBody().add(new WasmCastBranch(WasmCastCondition.SUCCESS, expr,
+                sourceType, targetType, unboxBlock));
+        unboxBlock.getBody().add(new WasmDrop(new WasmPop(sourceType)));
+        unboxBlock.getBody().add(new WasmNullConstant(targetType));
+        return new WasmCall(function, unboxBlock);
     }
 
     private WasmExpression generateTypeParameters(GenericTypeParameter[] params, ClassReader cls,

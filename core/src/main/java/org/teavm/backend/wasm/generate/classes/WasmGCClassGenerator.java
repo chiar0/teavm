@@ -56,6 +56,9 @@ import org.teavm.backend.wasm.model.expression.WasmArraySet;
 import org.teavm.backend.wasm.model.expression.WasmBlock;
 import org.teavm.backend.wasm.model.expression.WasmCall;
 import org.teavm.backend.wasm.model.expression.WasmCast;
+import org.teavm.backend.wasm.model.expression.WasmCastBranch;
+import org.teavm.backend.wasm.model.expression.WasmCastCondition;
+import org.teavm.backend.wasm.model.expression.WasmDrop;
 import org.teavm.backend.wasm.model.expression.WasmExpression;
 import org.teavm.backend.wasm.model.expression.WasmFloat32Constant;
 import org.teavm.backend.wasm.model.expression.WasmFloat64Constant;
@@ -67,6 +70,7 @@ import org.teavm.backend.wasm.model.expression.WasmInt64Constant;
 import org.teavm.backend.wasm.model.expression.WasmNullBranch;
 import org.teavm.backend.wasm.model.expression.WasmNullCondition;
 import org.teavm.backend.wasm.model.expression.WasmNullConstant;
+import org.teavm.backend.wasm.model.expression.WasmPop;
 import org.teavm.backend.wasm.model.expression.WasmReturn;
 import org.teavm.backend.wasm.model.expression.WasmSetGlobal;
 import org.teavm.backend.wasm.model.expression.WasmSetLocal;
@@ -673,8 +677,15 @@ public class WasmGCClassGenerator implements WasmGCClassInfoProvider, WasmGCInit
         function.add(objLocal);
         function.add(castObjLocal);
 
-        var cast = new WasmCast(new WasmGetLocal(objLocal), classInfo.getStructure().getReference());
-        function.getBody().add(new WasmSetLocal(castObjLocal, cast));
+        var cloneSourceType = standardClasses.objectClass().getType();
+        var cloneTargetType = classInfo.getStructure().getReference();
+        var cloneBlock = new WasmBlock(false);
+        cloneBlock.setType(cloneTargetType.asBlock());
+        cloneBlock.getBody().add(new WasmCastBranch(WasmCastCondition.SUCCESS, new WasmGetLocal(objLocal),
+                cloneSourceType, cloneTargetType, cloneBlock));
+        cloneBlock.getBody().add(new WasmDrop(new WasmPop(cloneSourceType)));
+        cloneBlock.getBody().add(new WasmNullConstant(cloneTargetType));
+        function.getBody().add(new WasmSetLocal(castObjLocal, cloneBlock));
 
         var copy = new WasmStructNew(classInfo.structure);
         for (var i = 0; i < classInfo.structure.getFields().size(); ++i) {
@@ -798,8 +809,15 @@ public class WasmGCClassGenerator implements WasmGCClassInfoProvider, WasmGCInit
         function.add(classLocal);
         function.add(objectLocal);
 
-        var castObject = new WasmCast(new WasmGetLocal(objectLocal), objectStructure.getNonNullReference());
-        var arrayField = new WasmStructGet(objectStructure, castObject, ARRAY_DATA_FIELD_OFFSET);
+        var lenSourceType = standardClasses.objectClass().getType();
+        var lenTargetType = objectStructure.getNonNullReference();
+        var lenBlock = new WasmBlock(false);
+        lenBlock.setType(lenTargetType.asBlock());
+        lenBlock.getBody().add(new WasmCastBranch(WasmCastCondition.SUCCESS, new WasmGetLocal(objectLocal),
+                lenSourceType, lenTargetType, lenBlock));
+        lenBlock.getBody().add(new WasmDrop(new WasmPop(lenSourceType)));
+        lenBlock.getBody().add(new WasmNullConstant(lenTargetType));
+        var arrayField = new WasmStructGet(objectStructure, lenBlock, ARRAY_DATA_FIELD_OFFSET);
         var result = new WasmArrayLength(arrayField);
         function.getBody().add(result);
         return function;
@@ -832,8 +850,15 @@ public class WasmGCClassGenerator implements WasmGCClassInfoProvider, WasmGCInit
             arrayGetObjectFunction.add(objectLocal);
             arrayGetObjectFunction.add(indexLocal);
 
-            var array = new WasmCast(new WasmGetLocal(objectLocal), arrayStruct.getNonNullReference());
-            var arrayData = new WasmStructGet(arrayStruct, array, ARRAY_DATA_FIELD_OFFSET);
+            var arrayGetSourceType = standardClasses.objectClass().getType();
+            var arrayGetTargetType = arrayStruct.getNonNullReference();
+            var arrayGetBlock = new WasmBlock(false);
+            arrayGetBlock.setType(arrayGetTargetType.asBlock());
+            arrayGetBlock.getBody().add(new WasmCastBranch(WasmCastCondition.SUCCESS,
+                    new WasmGetLocal(objectLocal), arrayGetSourceType, arrayGetTargetType, arrayGetBlock));
+            arrayGetBlock.getBody().add(new WasmDrop(new WasmPop(arrayGetSourceType)));
+            arrayGetBlock.getBody().add(new WasmNullConstant(arrayGetTargetType));
+            var arrayData = new WasmStructGet(arrayStruct, arrayGetBlock, ARRAY_DATA_FIELD_OFFSET);
             var result = new WasmArrayGet(arrayDataType, arrayData, new WasmGetLocal(indexLocal));
             arrayGetObjectFunction.getBody().add(result);
         }
@@ -859,8 +884,16 @@ public class WasmGCClassGenerator implements WasmGCClassInfoProvider, WasmGCInit
         function.add(objectLocal);
         function.add(indexLocal);
 
-        var array = new WasmCast(new WasmGetLocal(objectLocal), arrayStruct.getNonNullReference());
-        var arrayData = new WasmStructGet(arrayStruct, array, ARRAY_DATA_FIELD_OFFSET);
+        var arrayGetPrimSourceType = standardClasses.objectClass().getType();
+        var arrayGetPrimTargetType = arrayStruct.getNonNullReference();
+        var arrayGetPrimBlock = new WasmBlock(false);
+        arrayGetPrimBlock.setType(arrayGetPrimTargetType.asBlock());
+        arrayGetPrimBlock.getBody().add(new WasmCastBranch(WasmCastCondition.SUCCESS,
+                new WasmGetLocal(objectLocal), arrayGetPrimSourceType, arrayGetPrimTargetType,
+                arrayGetPrimBlock));
+        arrayGetPrimBlock.getBody().add(new WasmDrop(new WasmPop(arrayGetPrimSourceType)));
+        arrayGetPrimBlock.getBody().add(new WasmNullConstant(arrayGetPrimTargetType));
+        var arrayData = new WasmStructGet(arrayStruct, arrayGetPrimBlock, ARRAY_DATA_FIELD_OFFSET);
         var result = new WasmArrayGet(arrayDataType, arrayData, new WasmGetLocal(indexLocal));
         Class<?> primitiveType;
         Class<?> wrapperType;
@@ -948,8 +981,15 @@ public class WasmGCClassGenerator implements WasmGCClassInfoProvider, WasmGCInit
             arraySetObjectFunction.add(indexLocal);
             arraySetObjectFunction.add(valueLocal);
 
-            var array = new WasmCast(new WasmGetLocal(objectLocal), arrayStruct.getNonNullReference());
-            var arrayData = new WasmStructGet(arrayStruct, array, ARRAY_DATA_FIELD_OFFSET);
+            var arraySetSourceType = standardClasses.objectClass().getType();
+            var arraySetTargetType = arrayStruct.getNonNullReference();
+            var arraySetBlock = new WasmBlock(false);
+            arraySetBlock.setType(arraySetTargetType.asBlock());
+            arraySetBlock.getBody().add(new WasmCastBranch(WasmCastCondition.SUCCESS,
+                    new WasmGetLocal(objectLocal), arraySetSourceType, arraySetTargetType, arraySetBlock));
+            arraySetBlock.getBody().add(new WasmDrop(new WasmPop(arraySetSourceType)));
+            arraySetBlock.getBody().add(new WasmNullConstant(arraySetTargetType));
+            var arrayData = new WasmStructGet(arrayStruct, arraySetBlock, ARRAY_DATA_FIELD_OFFSET);
             var set = new WasmArraySet(arrayDataType, arrayData, new WasmGetLocal(indexLocal),
                     new WasmGetLocal(valueLocal));
             arraySetObjectFunction.getBody().add(set);
@@ -978,8 +1018,16 @@ public class WasmGCClassGenerator implements WasmGCClassInfoProvider, WasmGCInit
         function.add(indexLocal);
         function.add(valueLocal);
 
-        var array = new WasmCast(new WasmGetLocal(objectLocal), arrayStruct.getNonNullReference());
-        var arrayData = new WasmStructGet(arrayStruct, array, ARRAY_DATA_FIELD_OFFSET);
+        var arraySetPrimSourceType = standardClasses.objectClass().getType();
+        var arraySetPrimTargetType = arrayStruct.getNonNullReference();
+        var arraySetPrimBlock = new WasmBlock(false);
+        arraySetPrimBlock.setType(arraySetPrimTargetType.asBlock());
+        arraySetPrimBlock.getBody().add(new WasmCastBranch(WasmCastCondition.SUCCESS,
+                new WasmGetLocal(objectLocal), arraySetPrimSourceType, arraySetPrimTargetType,
+                arraySetPrimBlock));
+        arraySetPrimBlock.getBody().add(new WasmDrop(new WasmPop(arraySetPrimSourceType)));
+        arraySetPrimBlock.getBody().add(new WasmNullConstant(arraySetPrimTargetType));
+        var arrayData = new WasmStructGet(arrayStruct, arraySetPrimBlock, ARRAY_DATA_FIELD_OFFSET);
         var set = new WasmArraySet(arrayDataType, arrayData, new WasmGetLocal(indexLocal),
                 new WasmGetLocal(valueLocal));
         Class<?> primitiveType;
@@ -1022,7 +1070,15 @@ public class WasmGCClassGenerator implements WasmGCClassInfoProvider, WasmGCInit
         }
         var method = new MethodReference(wrapperType, primitiveType.getName() + "Value", primitiveType);
         var unwrapFunction = functionProvider.forInstanceMethod(method);
-        set.setValue(new WasmCast(set.getValue(), getClassInfo(ValueType.parse(wrapperType)).getType()));
+        var wrapSourceType = standardClasses.objectClass().getType();
+        var wrapTargetType = getClassInfo(ValueType.parse(wrapperType)).getType();
+        var wrapBlock = new WasmBlock(false);
+        wrapBlock.setType(wrapTargetType.asBlock());
+        wrapBlock.getBody().add(new WasmCastBranch(WasmCastCondition.SUCCESS, set.getValue(),
+                wrapSourceType, wrapTargetType, wrapBlock));
+        wrapBlock.getBody().add(new WasmDrop(new WasmPop(wrapSourceType)));
+        wrapBlock.getBody().add(new WasmNullConstant(wrapTargetType));
+        set.setValue(wrapBlock);
         set.setValue(new WasmCall(unwrapFunction, set.getValue()));
         function.getBody().add(set);
 
@@ -1060,10 +1116,23 @@ public class WasmGCClassGenerator implements WasmGCClassInfoProvider, WasmGCInit
         function.add(targetIndexLocal);
         function.add(countLocal);
 
-        var sourceArray = new WasmCast(new WasmGetLocal(sourceLocal), arrayStruct.getNonNullReference());
-        var sourceArrayData = new WasmStructGet(arrayStruct, sourceArray, ARRAY_DATA_FIELD_OFFSET);
-        var targetArray = new WasmCast(new WasmGetLocal(targetLocal), arrayStruct.getNonNullReference());
-        var targetArrayData = new WasmStructGet(arrayStruct, targetArray, ARRAY_DATA_FIELD_OFFSET);
+        var copySourceType = standardClasses.objectClass().getType();
+        var copyTargetType = arrayStruct.getNonNullReference();
+        var copySourceBlock = new WasmBlock(false);
+        copySourceBlock.setType(copyTargetType.asBlock());
+        copySourceBlock.getBody().add(new WasmCastBranch(WasmCastCondition.SUCCESS,
+                new WasmGetLocal(sourceLocal), copySourceType, copyTargetType, copySourceBlock));
+        copySourceBlock.getBody().add(new WasmDrop(new WasmPop(copySourceType)));
+        copySourceBlock.getBody().add(new WasmNullConstant(copyTargetType));
+        var sourceArrayData = new WasmStructGet(arrayStruct, copySourceBlock, ARRAY_DATA_FIELD_OFFSET);
+
+        var copyTargetBlock = new WasmBlock(false);
+        copyTargetBlock.setType(copyTargetType.asBlock());
+        copyTargetBlock.getBody().add(new WasmCastBranch(WasmCastCondition.SUCCESS,
+                new WasmGetLocal(targetLocal), copySourceType, copyTargetType, copyTargetBlock));
+        copyTargetBlock.getBody().add(new WasmDrop(new WasmPop(copySourceType)));
+        copyTargetBlock.getBody().add(new WasmNullConstant(copyTargetType));
+        var targetArrayData = new WasmStructGet(arrayStruct, copyTargetBlock, ARRAY_DATA_FIELD_OFFSET);
 
         function.getBody().add(new WasmArrayCopy(
                 arrayDataType, targetArrayData, new WasmGetLocal(targetIndexLocal),
@@ -1134,8 +1203,17 @@ public class WasmGCClassGenerator implements WasmGCClassInfoProvider, WasmGCInit
         function.add(dataCopyLocal);
 
         var newExpr = new WasmStructNew(objectStructure);
+        var arrayCloneSourceType = standardClasses.objectClass().getType();
+        var arrayCloneTargetType = objectStructure.getNonNullReference();
+        var arrayCloneBlock = new WasmBlock(false);
+        arrayCloneBlock.setType(arrayCloneTargetType.asBlock());
+        arrayCloneBlock.getBody().add(new WasmCastBranch(WasmCastCondition.SUCCESS,
+                new WasmGetLocal(instanceLocal), arrayCloneSourceType, arrayCloneTargetType,
+                arrayCloneBlock));
+        arrayCloneBlock.getBody().add(new WasmDrop(new WasmPop(arrayCloneSourceType)));
+        arrayCloneBlock.getBody().add(new WasmNullConstant(arrayCloneTargetType));
         function.getBody().add(new WasmSetLocal(originalLocal,
-                new WasmCast(new WasmGetLocal(instanceLocal), objectStructure.getNonNullReference())));
+                arrayCloneBlock));
 
         var classValue = new WasmStructGet(objectStructure, new WasmGetLocal(originalLocal),
                 WasmGCClassInfoProvider.VT_FIELD_OFFSET);
@@ -1911,8 +1989,15 @@ public class WasmGCClassGenerator implements WasmGCClassInfoProvider, WasmGCInit
         instantiator.add(param);
         instantiator.add(localVar);
 
-        instantiator.getBody().add(new WasmSetLocal(localVar, new WasmCast(new WasmGetLocal(param),
-                classInfo.getType())));
+        var initSourceType = objectClass.getType();
+        var initTargetType = classInfo.getType();
+        var initBlock = new WasmBlock(false);
+        initBlock.setType(initTargetType.asBlock());
+        initBlock.getBody().add(new WasmCastBranch(WasmCastCondition.SUCCESS, new WasmGetLocal(param),
+                initSourceType, initTargetType, initBlock));
+        initBlock.getBody().add(new WasmDrop(new WasmPop(initSourceType)));
+        initBlock.getBody().add(new WasmNullConstant(initTargetType));
+        instantiator.getBody().add(new WasmSetLocal(localVar, initBlock));
         var call = new WasmCall(functionProvider.forInstanceMethod(method.getReference()),
                 new WasmGetLocal(localVar));
         instantiator.getBody().add(call);
