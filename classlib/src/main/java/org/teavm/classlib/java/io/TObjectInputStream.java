@@ -582,7 +582,7 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
                     return NEEDS_CHILDREN;
                 }
                 frameTop--;
-                Object reconstructed = reconstructIfNonArrayList(f.className, list, list.size());
+                Object reconstructed = reconstructIfNonArrayList(f.className, list);
                 if (reconstructed != list) {
                     patchHandle(list, reconstructed);
                 }
@@ -814,7 +814,7 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
         List<Object> list = new ArrayList<>(size);
         register(list);
         if (size == 0) {
-            Object reconstructed = reconstructIfNonArrayList(listClassName, list, size);
+            Object reconstructed = reconstructIfNonArrayList(listClassName, list);
             if (reconstructed != list) {
                 patchHandle(list, reconstructed);
             }
@@ -833,7 +833,7 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
      * declared iterable type (e.g. FastArrayList) via reflection. Falls back
      * to the ArrayList if construction fails.
      */
-    private static Object reconstructIfNonArrayList(String className, List<Object> elements, int size) {
+    private static Object reconstructIfNonArrayList(String className, List<Object> elements) {
         if ("java.util.ArrayList".equals(className) || className.isEmpty()) {
             return elements;
         }
@@ -846,7 +846,7 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
             }
             return container;
         } catch (Throwable t) {
-            return elements;
+            throw new RuntimeException("Failed to reconstruct " + className + ": " + t.getMessage(), t);
         }
     }
 
