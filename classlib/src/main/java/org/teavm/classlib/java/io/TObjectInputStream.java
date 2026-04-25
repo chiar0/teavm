@@ -308,7 +308,7 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
         Object container;
         int remaining;
 
-        // OBJECT_FIELDS:
+        // OBJECT_FIELDS / LIST_ELEMENTS:
         String className;
         String nextFieldName;
         ClassSchema schema;
@@ -582,7 +582,11 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
                     return NEEDS_CHILDREN;
                 }
                 frameTop--;
-                return list;
+                Object reconstructed = reconstructIfNonArrayList(f.className, list, list.size());
+                if (reconstructed != list) {
+                    patchHandle(list, reconstructed);
+                }
+                return reconstructed;
             }
 
             case Frame.MAP_ENTRIES: {
@@ -668,6 +672,15 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
 
     private void register(Object obj) {
         handleList.add(obj);
+    }
+
+    private void patchHandle(Object oldObj, Object newObj) {
+        for (int i = handleList.size() - 1; i >= 0; i--) {
+            if (handleList.get(i) == oldObj) {
+                handleList.set(i, newObj);
+                return;
+            }
+        }
     }
 
     private Object resolveObject(Object obj) {
@@ -793,7 +806,7 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
     }
 
     private Object startList() throws IOException {
-        readUTF(); // className (always reified as ArrayList)
+        String listClassName = readUTF();
         int size = readInt();
         if (size < 0 || size > 10_000_000) {
             throw new IOException("List size out of range: " + size);
@@ -801,13 +814,40 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
         List<Object> list = new ArrayList<>(size);
         register(list);
         if (size == 0) {
-            return list;
+            Object reconstructed = reconstructIfNonArrayList(listClassName, list, size);
+            if (reconstructed != list) {
+                patchHandle(list, reconstructed);
+            }
+            return reconstructed;
         }
         Frame f = pushFrame();
         f.type = Frame.LIST_ELEMENTS;
         f.container = list;
         f.remaining = size;
+        f.className = listClassName;
         return NEEDS_CHILDREN;
+    }
+
+    /**
+     * After reading all elements into an ArrayList, try to reconstruct the
+     * declared iterable type (e.g. FastArrayList) via reflection. Falls back
+     * to the ArrayList if construction fails.
+     */
+    private static Object reconstructIfNonArrayList(String className, List<Object> elements, int size) {
+        if ("java.util.ArrayList".equals(className) || className.isEmpty()) {
+            return elements;
+        }
+        try {
+            Class<?> declaredType = Class.forName(className);
+            Object container = declaredType.getDeclaredConstructor().newInstance();
+            java.lang.reflect.Method addMethod = declaredType.getMethod("add", Object.class);
+            for (Object item : elements) {
+                addMethod.invoke(container, item);
+            }
+            return container;
+        } catch (Throwable t) {
+            return elements;
+        }
     }
 
     private Object startMap() throws IOException {

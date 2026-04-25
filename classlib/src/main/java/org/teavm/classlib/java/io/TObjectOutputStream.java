@@ -426,7 +426,7 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
                 snapshot.add(item);
             }
             writeByte(TC_LIST);
-            writeUTF(snapshot.getClass().getName());
+            writeUTF(obj.getClass().getName());
             writeInt(snapshot.size());
             WriteFrame f = pushFrame();
             f.type = WriteFrame.WRITE_LIST;
