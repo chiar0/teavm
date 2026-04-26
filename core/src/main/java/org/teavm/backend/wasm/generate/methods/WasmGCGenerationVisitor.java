@@ -226,9 +226,28 @@ public class WasmGCGenerationVisitor extends BaseWasmGenerationVisitor {
         array.acceptVisitor(typeInference);
         var arrayRefType = (WasmType.CompositeReference) typeInference.getSingleResult();
         var arrayType = (WasmArray) arrayRefType.composite;
-        accept(value, arrayType.getElementType().asUnpackedType());
+        var elementType = arrayType.getElementType().asUnpackedType();
+        accept(value, elementType);
         var wasmValue = result;
+        if (needsArrayStoreCheck(elementType)) {
+            var elementRefType = (WasmType.Reference) elementType;
+            var block = new WasmBlock(false);
+            var checkBlock = new WasmBlock(false);
+            var test = new WasmTest(wasmValue, elementRefType);
+            checkBlock.getBody().add(new WasmBranch(test, checkBlock));
+            var callAse = new WasmCall(context.aseMethod());
+            var throwExpr = new WasmThrow(context.getExceptionTag());
+            throwExpr.getArguments().add(callAse);
+            checkBlock.getBody().add(throwExpr);
+            block.getBody().add(checkBlock);
+            block.getBody().add(new WasmArraySet(arrayType, array, index, wasmValue));
+            return block;
+        }
         return new WasmArraySet(arrayType, array, index, wasmValue);
+    }
+
+    private boolean needsArrayStoreCheck(WasmType elementType) {
+        return elementType instanceof WasmType.CompositeReference;
     }
 
     @Override

@@ -614,6 +614,25 @@ public final class TClass<T> extends TObject implements TGenericDeclaration, TTy
 
     @SuppressWarnings({ "unchecked", "unused" })
     @PluggableDependency(ClassGenerator.class)
+    public T newInstanceWithoutClinit() throws TInstantiationException, TIllegalAccessException {
+        if (classInfo.itemType() != null
+                || classInfo.primitiveKind() != ClassInfo.PrimitiveKind.NOT
+                || (classInfo.modifiers() & ModifiersInfo.ABSTRACT) != 0
+                || (classInfo.modifiers() & ModifiersInfo.INTERFACE) != 0) {
+            throw new TInstantiationException();
+        }
+        var instance = classInfo.newInstance();
+        if (instance == null) {
+            throw new TInstantiationException();
+        }
+        if (!classInfo.initializeNewInstance(instance)) {
+            throw new TInstantiationException();
+        }
+        return (T) instance;
+    }
+
+    @SuppressWarnings({ "unchecked", "unused" })
+    @PluggableDependency(ClassGenerator.class)
     public T newInstance() throws TInstantiationException, TIllegalAccessException {
         if (classInfo.itemType() != null
                 || classInfo.primitiveKind() != ClassInfo.PrimitiveKind.NOT

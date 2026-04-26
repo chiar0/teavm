@@ -36,6 +36,10 @@ public class WasmGCSupport {
         return new ClassCastException();
     }
 
+    public static ArrayStoreException ase() {
+        return new ArrayStoreException();
+    }
+
     public static IllegalAccessException iae() {
         return new IllegalAccessException();
     }

@@ -293,6 +293,12 @@ public class WasmGCClassGenerator implements WasmGCClassInfoProvider, WasmGCInit
                         new WasmFunctionReference(classInfo.initArrayFunction)));
             }
         }
+        var classObjectFn = reflectionTypes.classInfo().classObjectFunction();
+        classObjectFn.setReferenced(true);
+        for (var entry : classInfoMap.values()) {
+            function.getBody().add(new WasmDrop(
+                    new WasmCall(classObjectFn, new WasmGetGlobal(entry.pointer))));
+        }
         for (var consumer : staticFieldInitializers) {
             consumer.accept(function);
         }
