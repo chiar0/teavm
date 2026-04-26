@@ -302,6 +302,7 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
         static final int OBJECT_ARRAY  = 2;
         static final int LIST_ELEMENTS = 3;
         static final int MAP_ENTRIES   = 4;
+        static final int SET_ELEMENTS  = 5;
         static final int DRAIN         = 8;
 
         int type;
@@ -487,6 +488,8 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
                 return startList();
             case TC_MAP:
                 return startMap();
+            case TC_SET:
+                return startSet();
             case TC_OBJECT:
                 return startCustomObject();
             case TC_BITSET:
@@ -614,6 +617,22 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
                 Object reconstructed = reconstructIfNonHashMap(f.className, map);
                 if (reconstructed != map) {
                     patchHandle(map, reconstructed);
+                }
+                return reconstructed;
+            }
+
+            case Frame.SET_ELEMENTS: {
+                @SuppressWarnings("unchecked")
+                java.util.Set<Object> set = (java.util.Set<Object>) f.container;
+                set.add(value);
+                f.remaining--;
+                if (f.remaining > 0) {
+                    return NEEDS_CHILDREN;
+                }
+                frameTop--;
+                Object reconstructed = reconstructIfNonHashSet(f.className, set);
+                if (reconstructed != set) {
+                    patchHandle(set, reconstructed);
                 }
                 return reconstructed;
             }
@@ -892,6 +911,45 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
         f.className = mapClassName;
         f.waitingForValue = false;
         return NEEDS_CHILDREN;
+    }
+
+    private Object startSet() throws IOException {
+        String setClassName = readUTF();
+        int size = readInt();
+        if (size < 0 || size > 10_000_000) {
+            throw new IOException("Set size out of range: " + size);
+        }
+        java.util.Set<Object> set = new java.util.HashSet<>(size * 2);
+        register(set);
+        if (size == 0) {
+            Object reconstructed = reconstructIfNonHashSet(setClassName, set);
+            if (reconstructed != set) {
+                patchHandle(set, reconstructed);
+            }
+            return reconstructed;
+        }
+        Frame f = pushFrame();
+        f.type = Frame.SET_ELEMENTS;
+        f.container = set;
+        f.remaining = size;
+        f.className = setClassName;
+        return NEEDS_CHILDREN;
+    }
+
+    private static Object reconstructIfNonHashSet(String className, java.util.Set<Object> elements) {
+        if ("java.util.HashSet".equals(className) || className.isEmpty()) {
+            return elements;
+        }
+        try {
+            Class<?> declaredType = Class.forName(className);
+            Object container = declaredType.getDeclaredConstructor().newInstance();
+            if (container instanceof java.util.Set) {
+                ((java.util.Set<Object>) container).addAll(elements);
+            }
+            return container;
+        } catch (Throwable t) {
+            throw new RuntimeException("Failed to reconstruct " + className + ": " + t.getMessage(), t);
+        }
     }
 
     private Object startCustomObject() throws IOException, ClassNotFoundException {
@@ -1530,6 +1588,7 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
     private static final byte TC_BYTE      = TObjectOutputStream.TC_BYTE;
     private static final byte TC_ENUM      = TObjectOutputStream.TC_ENUM;
     private static final byte TC_BITSET    = TObjectOutputStream.TC_BITSET;
+    private static final byte TC_SET       = TObjectOutputStream.TC_SET;
     private static final byte TC_SCHEMA    = TObjectOutputStream.TC_SCHEMA;
     private static final byte TC_LONGSTRING = 0x62;
 

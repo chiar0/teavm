@@ -70,6 +70,7 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
         static final int WRITE_ARRAY  = 2;
         static final int WRITE_LIST   = 3;
         static final int WRITE_MAP    = 4;
+        static final int WRITE_SET    = 5;
 
         int type;
         Object container;        // The object whose children are being written
@@ -419,6 +420,22 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
             f.nextIndex = 0;
             f.waitingForValue = false;
             return false;
+        } else if (obj instanceof java.util.Set) {
+            java.util.Set<?> set = (java.util.Set<?>) obj;
+            writeByte(TC_SET);
+            writeUTF(className);
+            writeInt(set.size());
+            WriteFrame f = pushFrame();
+            f.type = WriteFrame.WRITE_SET;
+            f.list = new ArrayList<>(set);
+            f.array = null;
+            f.mapKeys = null;
+            f.mapValues = null;
+            f.fields = null;
+            f.container = obj;
+            f.nextIndex = 0;
+            f.waitingForValue = false;
+            return false;
         } else if (obj instanceof Iterable && !(obj instanceof Iterator)) {
             // Non-List Iterable (e.g. FastArrayList) — snapshot as ArrayList
             List<Object> snapshot = new ArrayList<>();
@@ -559,7 +576,8 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
                 Object val = f.array[f.nextIndex++];
                 return val != null ? val : NULL_CHILD;
             }
-            case WriteFrame.WRITE_LIST: {
+            case WriteFrame.WRITE_LIST:
+            case WriteFrame.WRITE_SET: {
                 if (f.nextIndex >= f.list.size()) {
                     return null;
                 }
@@ -868,6 +886,7 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
     static final byte TC_ENUM        = 0x7E;   // Enum (name follows)
     static final byte TC_LONGSTRING  = 0x62;   // String > 64KB
     // ── Special-cased library types (no $meta.fields in TeaVM) ──
+    static final byte TC_SET               = 0x60;   // java.util.Set
     static final byte TC_BITSET            = 0x61;   // java.util.BitSet
     static final byte TC_SCHEMA            = 0x67;   // schema manifest block
 }
