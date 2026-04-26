@@ -104,6 +104,38 @@ public class TField extends TAccessibleObject implements TMember {
         return getWithoutCheck(obj);
     }
 
+    public boolean getBoolean(Object obj) throws TIllegalArgumentException, TIllegalAccessException {
+        return (Boolean) get(obj);
+    }
+
+    public byte getByte(Object obj) throws TIllegalArgumentException, TIllegalAccessException {
+        return ((Number) get(obj)).byteValue();
+    }
+
+    public char getChar(Object obj) throws TIllegalArgumentException, TIllegalAccessException {
+        return (Character) get(obj);
+    }
+
+    public short getShort(Object obj) throws TIllegalArgumentException, TIllegalAccessException {
+        return ((Number) get(obj)).shortValue();
+    }
+
+    public int getInt(Object obj) throws TIllegalArgumentException, TIllegalAccessException {
+        return ((Number) get(obj)).intValue();
+    }
+
+    public long getLong(Object obj) throws TIllegalArgumentException, TIllegalAccessException {
+        return ((Number) get(obj)).longValue();
+    }
+
+    public float getFloat(Object obj) throws TIllegalArgumentException, TIllegalAccessException {
+        return ((Number) get(obj)).floatValue();
+    }
+
+    public double getDouble(Object obj) throws TIllegalArgumentException, TIllegalAccessException {
+        return ((Number) get(obj)).doubleValue();
+    }
+
     public Object getWithoutCheck(Object obj) {
         if ((fieldInfo.modifiers() & ModifiersInfo.STATIC) != 0) {
             declaringClass.initialize();
