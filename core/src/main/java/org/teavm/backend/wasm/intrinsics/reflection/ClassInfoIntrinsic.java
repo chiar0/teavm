@@ -78,10 +78,21 @@ public class ClassInfoIntrinsic implements WasmGCIntrinsic {
             }
             case "isSuperTypeOf": {
                 var classInfoType = context.classInfoProvider().reflectionTypes().classInfo();
-                var receiver = context.generate(invocation.getArguments().get(0));
+                var block = new WasmBlock(false);
+                block.setType(WasmType.INT32.asBlock());
+                var cachedReceiver = context.exprCache().create(
+                        context.generate(invocation.getArguments().get(0)),
+                        classInfoType.structure().getReference(), null, block.getBody());
+                var fnRef = new WasmStructGet(classInfoType.structure(), cachedReceiver.expr(),
+                        classInfoType.supertypeFunctionIndex());
+                var nullBranch = new WasmNullBranch(WasmNullCondition.NULL, fnRef, block);
+                nullBranch.setResult(new WasmInt32Constant(0));
                 var other = context.generate(invocation.getArguments().get(1));
-                return callVirtual(context, classInfoType.supertypeFunctionType(),
-                        classInfoType.supertypeFunctionIndex(), receiver, other);
+                var call = new WasmCallReference(nullBranch, classInfoType.supertypeFunctionType(),
+                        cachedReceiver.expr(), other);
+                block.getBody().add(call);
+                cachedReceiver.release();
+                return block;
             }
             case "newArrayInstance": {
                 var classInfoType = context.classInfoProvider().reflectionTypes().classInfo();

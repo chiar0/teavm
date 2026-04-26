@@ -538,7 +538,7 @@ public class Renderer implements RenderingManager {
                 if (classNames.contains(iface)) {
                     writer.appendClass(iface);
                 } else {
-                    writer.append("0");
+                    writer.append("null");
                 }
             }
             writer.append("],").ws();

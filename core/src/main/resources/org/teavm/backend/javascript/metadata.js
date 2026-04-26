@@ -54,7 +54,7 @@ let $rt_metadata = data => {
         m.parent = (superclass !== 0 && superclass != null) ? superclass : null;
         m.superinterfaces = data[i++];
         if (m.superinterfaces) {
-            m.superinterfaces = m.superinterfaces.filter(iface => iface != null);
+            m.superinterfaces = m.superinterfaces.filter(iface => iface != null && iface !== 0);
         }
         if (m.parent) {
             cls.prototype = teavm_globals.Object.create(m.parent.prototype);
