@@ -1004,9 +1004,11 @@ export async function load(src: string | BufferSource, options?: LoadOptions): P
     const emscriptenModulePaths = options.emscriptenModules ?? {};
     const deobfuscatorOptions = options.stackDeobfuscator ?? {};
     const debugInfoLocation = deobfuscatorOptions.infoLocation ?? "auto";
-    const compilationPromise = compileModule(src, isNodeJs);
+    const stringBuiltins = await hasStringBuiltins();
+    const compilationPromise = compileModule(src, isNodeJs, stringBuiltins);
     const [deobfuscatorFactory, module, debugInfo, emscriptenModules] = await Promise.all([
-        deobfuscatorOptions.enabled ? getDeobfuscator(src, deobfuscatorOptions, isNodeJs) : Promise.resolve(null),
+        deobfuscatorOptions.enabled
+            ? getDeobfuscator(src, deobfuscatorOptions, isNodeJs, stringBuiltins) : Promise.resolve(null),
         compilationPromise,
         fetchExternalDebugInfo(src, debugInfoLocation, deobfuscatorOptions, isNodeJs),
         loadEmscriptenModules(emscriptenModulePaths, isNodeJs)
@@ -1014,7 +1016,7 @@ export async function load(src: string | BufferSource, options?: LoadOptions): P
 
     const importObj: WebAssembly.Imports = {};
     const userExports: Record<string, unknown> = {};
-    const defaultsResult = defaults(importObj, userExports, await hasStringBuiltins());
+    const defaultsResult = defaults(importObj, userExports, stringBuiltins);
     const allocator = await linkImports(importObj, options, module, emscriptenModules);
     if (typeof options.installImports !== "undefined") {
         options.installImports(importObj);
@@ -1051,12 +1053,14 @@ export async function load(src: string | BufferSource, options?: LoadOptions): P
     return teavm;
 }
 
-async function compileModule(src: string | BufferSource, isNodeJs: boolean): Promise<WebAssembly.Module> {
+async function compileModule(src: string | BufferSource, isNodeJs: boolean,
+        stringBuiltins: boolean): Promise<WebAssembly.Module> {
+    const compileOptions = stringBuiltins ? { builtins: ["js-string"] as const } : {};
     if (typeof src !== "string") {
-        return await WebAssembly.compile(src, { builtins: ["js-string"] });
+        return await WebAssembly.compile(src, compileOptions);
     }
     const [response, close] = await openPath(src, isNodeJs);
-    const result = await WebAssembly.compileStreaming(response, { builtins: ["js-string"] });
+    const result = await WebAssembly.compileStreaming(response, compileOptions);
     close();
     return result;
 }
@@ -1088,15 +1092,17 @@ function hasStringBuiltins(): Promise<boolean> {
 async function getDeobfuscator(
     path: string | BufferSource,
     options: DeobfuscatorOptions,
-    isNodeJs: boolean
+    isNodeJs: boolean,
+    stringBuiltins: boolean
 ): Promise<WebAssembly.Instance | null> {
     if (typeof path !== "string" && !options.path) {
         return null;
     }
     try {
         const importObj: WebAssembly.Imports = {};
-        const module = await compileModule(options.path ?? `${path as string}-deobfuscator.wasm`, isNodeJs);
-        const defaultsResult = defaults(importObj, {}, await hasStringBuiltins());
+        const module = await compileModule(options.path ?? `${path as string}-deobfuscator.wasm`, isNodeJs,
+            stringBuiltins);
+        const defaultsResult = defaults(importObj, {}, stringBuiltins);
         await linkImports(importObj, {}, module, []);
         const instance = await WebAssembly.instantiate(module, importObj);
         defaultsResult.supplyExports(instance.exports);

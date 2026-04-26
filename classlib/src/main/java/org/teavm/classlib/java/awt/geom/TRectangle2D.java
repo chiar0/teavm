@@ -158,6 +158,17 @@ public abstract class TRectangle2D implements Cloneable {
             this.height = h;
         }
 
+        public void add(TRectangle2D r) {
+            double x1 = Math.min(this.x, r.getX());
+            double y1 = Math.min(this.y, r.getY());
+            double x2 = Math.max(this.x + this.width, r.getX() + r.getWidth());
+            double y2 = Math.max(this.y + this.height, r.getY() + r.getHeight());
+            this.x = x1;
+            this.y = y1;
+            this.width = x2 - x1;
+            this.height = y2 - y1;
+        }
+
         @Override
         public String toString() {
             return "Rectangle2D.Double[" + x + ", " + y + ", " + width + ", " + height + "]";

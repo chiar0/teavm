@@ -1,107 +1,182 @@
 package gnu.trove.list.array;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
 import java.util.Random;
+
+import gnu.trove.TLongCollection;
 
 /**
  * TeaVM-compatible replacement for Trove's TLongArrayList.
- * Extends ArrayList<Long> instead of using sun.misc.Unsafe-backed primitive storage.
- * Provides the full Trove TLongArrayList API via delegation to ArrayList methods.
+ * Uses internal long[] storage instead of sun.misc.Unsafe.
  */
-public class TLongArrayList extends ArrayList<Long> {
+public class TLongArrayList {
 
     protected long no_entry_value;
+    private long[] data;
+    private int size;
 
-    public TLongArrayList() { super(); no_entry_value = 0L; }
-    public TLongArrayList(int capacity) { super(capacity); no_entry_value = 0L; }
-    public TLongArrayList(Collection<? extends Long> c) { super(c); no_entry_value = 0L; }
-    public TLongArrayList(long[] values) { 
-        super(values.length);
-        for (long v : values) add(v);
-    }
+    private static final int DEFAULT_CAPACITY = 10;
+
+    public TLongArrayList() { this(DEFAULT_CAPACITY); }
+    public TLongArrayList(int capacity) { data = new long[Math.max(1, capacity)]; size = 0; }
+    public TLongArrayList(long[] values) { data = values.clone(); size = values.length; }
+    public TLongArrayList(TLongCollection c) { this(c.size()); for (gnu.trove.iterator.TLongIterator it = c.iterator(); it.hasNext(); ) add(it.next()); }
 
     public long getNoEntryValue() { return no_entry_value; }
     public void setNoEntryValue(long v) { no_entry_value = v; }
 
+    private void grow(int minCapacity) {
+        if (minCapacity <= data.length) return;
+        int newCap = Math.max(data.length + (data.length >> 1), minCapacity);
+        long[] nd = new long[newCap];
+        System.arraycopy(data, 0, nd, 0, size);
+        data = nd;
+    }
+
+    // ---- Primitive API ----
+
+    public boolean add(long val) {
+        grow(size + 1);
+        data[size++] = val;
+        return true;
+    }
+
+    public long get(int index) {
+        if (index < 0 || index >= size) throw new IndexOutOfBoundsException();
+        return data[index];
+    }
+
+    public long set(int index, long val) {
+        if (index < 0 || index >= size) throw new IndexOutOfBoundsException();
+        long old = data[index];
+        data[index] = val;
+        return old;
+    }
+
+    public boolean contains(long val) {
+        return indexOf(val) >= 0;
+    }
+
+    public int indexOf(long val) {
+        for (int i = 0; i < size; i++) if (data[i] == val) return i;
+        return -1;
+    }
+
+    public boolean remove(long val) {
+        int idx = indexOf(val);
+        if (idx < 0) return false;
+        removeAt(idx);
+        return true;
+    }
+
+    public long removeAt(int index) {
+        if (index < 0 || index >= size) throw new IndexOutOfBoundsException();
+        long old = data[index];
+        int moved = size - index - 1;
+        if (moved > 0) System.arraycopy(data, index + 1, data, index, moved);
+        size--;
+        return old;
+    }
+
+    public void insert(int index, long value) {
+        if (index < 0 || index > size) throw new IndexOutOfBoundsException();
+        grow(size + 1);
+        System.arraycopy(data, index, data, index + 1, size - index);
+        data[index] = value;
+        size++;
+    }
+
+    public void reset() { clear(); }
+
+    public long[] toArray() {
+        long[] result = new long[size];
+        System.arraycopy(data, 0, result, 0, size);
+        return result;
+    }
+
+    public long[] toArray(long[] dest) {
+        if (dest.length < size) dest = new long[size];
+        System.arraycopy(data, 0, dest, 0, size);
+        return dest;
+    }
+
+    public static TLongArrayList wrap(long[] a) {
+        TLongArrayList list = new TLongArrayList(0);
+        list.data = a;
+        list.size = a.length;
+        return list;
+    }
+
+    public boolean addAll(TLongCollection c) {
+        boolean modified = false;
+        for (gnu.trove.iterator.TLongIterator it = c.iterator(); it.hasNext(); ) {
+            add(it.next());
+            modified = true;
+        }
+        return modified;
+    }
+
+    // ---- Boxed overloads for generic interop ----
+
+    public int size() { return size; }
+    public Long get(Integer index) { return get(index.intValue()); }
+    public boolean add(Long val) { return add(val.longValue()); }
+    public Long set(Integer index, Long val) { return set(index.intValue(), val.longValue()); }
+    public Long remove(Integer index) { return removeAt(index.intValue()); }
+    public void clear() { size = 0; }
+    public boolean isEmpty() { return size == 0; }
+
+    // ---- Additional API ----
+
     public long getQuick(int index) {
-        if (index < 0 || index >= size()) return no_entry_value;
-        return get(index);
+        if (index < 0 || index >= size) return no_entry_value;
+        return data[index];
     }
 
     public void setQuick(int index, long value) {
         if (index < 0) return;
-        if (index >= size()) {
-            while (size() <= index) add(no_entry_value);
-        }
-        set(index, value);
+        grow(index + 1);
+        data[index] = value;
+        if (index >= size) size = index + 1;
     }
 
-    public void insert(int index, long value) {
-        add(index, value);
-    }
-
-    public long removeAt(int index) {
-        return remove(index);
-    }
-
-    public void ensureCapacity(int capacity) {
-        super.ensureCapacity(capacity);
-    }
-
-    public int binarySearch(long value) {
-        return Collections.binarySearch(this, value);
-    }
+    public void ensureCapacity(int capacity) { grow(capacity); }
 
     public void fill(long value) {
-        for (int i = 0; i < size(); i++) set(i, value);
+        for (int i = 0; i < size; i++) data[i] = value;
     }
 
     public void reverse() {
-        for (int i = 0, j = size() - 1; i < j; i++, j--) {
-            long tmp = get(i);
-            set(i, get(j));
-            set(j, tmp);
+        for (int i = 0, j = size - 1; i < j; i++, j--) {
+            long tmp = data[i]; data[i] = data[j]; data[j] = tmp;
         }
     }
 
-    public void sort() {
-        this.sort(null);
-    }
+    public void sort() { java.util.Arrays.sort(data, 0, size); }
 
     public void shuffle(Random random) {
-        for (int i = size() - 1; i > 0; i--) {
+        for (int i = size - 1; i > 0; i--) {
             int j = random.nextInt(i + 1);
-            long tmp = get(i);
-            set(i, get(j));
-            set(j, tmp);
+            long tmp = data[i]; data[i] = data[j]; data[j] = tmp;
         }
-    }
-
-    public long[] toArray(long[] dest) {
-        if (dest.length < size()) dest = new long[size()];
-        for (int i = 0; i < size(); i++) dest[i] = get(i);
-        return dest;
     }
 
     public long max() {
-        if (isEmpty()) throw new IllegalStateException();
-        long m = get(0);
-        for (int i = 1; i < size(); i++) { long v = get(i); if (v > m) m = v; }
+        if (size == 0) throw new IllegalStateException();
+        long m = data[0];
+        for (int i = 1; i < size; i++) if (data[i] > m) m = data[i];
         return m;
     }
 
     public long min() {
-        if (isEmpty()) throw new IllegalStateException();
-        long m = get(0);
-        for (int i = 1; i < size(); i++) { long v = get(i); if (v < m) m = v; }
+        if (size == 0) throw new IllegalStateException();
+        long m = data[0];
+        for (int i = 1; i < size; i++) if (data[i] < m) m = data[i];
         return m;
     }
 
     public long sum() {
         long s = 0L;
-        for (int i = 0; i < size(); i++) s += get(i);
+        for (int i = 0; i < size; i++) s += data[i];
         return s;
     }
 }
