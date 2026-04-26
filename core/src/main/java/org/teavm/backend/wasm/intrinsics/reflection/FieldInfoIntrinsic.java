@@ -15,7 +15,6 @@
  */
 package org.teavm.backend.wasm.intrinsics.reflection;
 
-import java.lang.IllegalAccessException;
 import org.teavm.ast.InvocationExpr;
 import org.teavm.backend.wasm.intrinsics.WasmGCIntrinsic;
 import org.teavm.backend.wasm.intrinsics.WasmGCIntrinsicContext;

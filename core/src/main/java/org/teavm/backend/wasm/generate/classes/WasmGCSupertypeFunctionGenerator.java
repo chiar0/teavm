@@ -186,9 +186,15 @@ public class WasmGCSupertypeFunctionGenerator implements WasmGCSupertypeFunction
                 classInfoType.structure().getReference());
         var functionRef = new WasmStructGet(classInfoType.structure(), new WasmGetLocal(thisVar),
                 classInfoType.supertypeFunctionIndex());
-        var delegateToItem = new WasmCallReference(functionRef, functionType, new WasmGetLocal(thisVar),
+        var fnNullGuard = new WasmConditional(new WasmIsNull(functionRef));
+        fnNullGuard.setType(WasmType.INT32.asBlock());
+        fnNullGuard.getThenBlock().getBody().add(new WasmInt32Constant(0));
+        var functionRef2 = new WasmStructGet(classInfoType.structure(), new WasmGetLocal(thisVar),
+                classInfoType.supertypeFunctionIndex());
+        var delegateToItem = new WasmCallReference(functionRef2, functionType, new WasmGetLocal(thisVar),
                 new WasmGetLocal(subtypeVar));
-        itemTest.getElseBlock().getBody().add(delegateToItem);
+        fnNullGuard.getElseBlock().getBody().add(delegateToItem);
+        itemTest.getElseBlock().getBody().add(fnNullGuard);
 
         function.getBody().add(itemTest);
         return function;

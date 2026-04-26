@@ -611,7 +611,11 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
                     return NEEDS_CHILDREN;
                 }
                 frameTop--;
-                return map;
+                Object reconstructed = reconstructIfNonHashMap(f.className, map);
+                if (reconstructed != map) {
+                    patchHandle(map, reconstructed);
+                }
+                return reconstructed;
             }
 
             case Frame.DRAIN: {
@@ -850,8 +854,24 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
         }
     }
 
+    private static Object reconstructIfNonHashMap(String className, Map<Object, Object> elements) {
+        if ("java.util.HashMap".equals(className) || className.isEmpty()) {
+            return elements;
+        }
+        try {
+            Class<?> declaredType = Class.forName(className);
+            Object container = declaredType.getDeclaredConstructor().newInstance();
+            if (container instanceof Map) {
+                ((Map) container).putAll(elements);
+            }
+            return container;
+        } catch (Throwable t) {
+            throw new RuntimeException("Failed to reconstruct " + className + ": " + t.getMessage(), t);
+        }
+    }
+
     private Object startMap() throws IOException {
-        readUTF(); // className (always reified as HashMap)
+        String mapClassName = readUTF();
         int size = readInt();
         if (size < 0 || size > 10_000_000) {
             throw new IOException("Map size out of range: " + size);
@@ -859,12 +879,17 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
         Map<Object, Object> map = new HashMap<>(size * 2);
         register(map);
         if (size == 0) {
-            return map;
+            Object reconstructed = reconstructIfNonHashMap(mapClassName, map);
+            if (reconstructed != map) {
+                patchHandle(map, reconstructed);
+            }
+            return reconstructed;
         }
         Frame f = pushFrame();
         f.type = Frame.MAP_ENTRIES;
         f.container = map;
         f.remaining = size;
+        f.className = mapClassName;
         f.waitingForValue = false;
         return NEEDS_CHILDREN;
     }

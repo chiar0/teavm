@@ -67,7 +67,11 @@ public class TField extends TAccessibleObject implements TMember {
     }
 
     public TClass<?> getType() {
-        return (TClass<?>) (Object) ClassInfoUtil.resolve(fieldInfo.type()).classObject();
+        var type = fieldInfo.type();
+        if (type == null) {
+            return (TClass<?>) (Object) Object.class;
+        }
+        return (TClass<?>) (Object) ClassInfoUtil.resolve(type).classObject();
     }
 
     public TType getGenericType() {

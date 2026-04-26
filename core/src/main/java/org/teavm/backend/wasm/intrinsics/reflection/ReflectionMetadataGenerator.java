@@ -36,13 +36,13 @@ import org.teavm.backend.wasm.model.WasmArray;
 import org.teavm.backend.wasm.model.WasmFunction;
 import org.teavm.backend.wasm.model.WasmLocal;
 import org.teavm.backend.wasm.model.WasmModule;
+import org.teavm.backend.wasm.model.WasmTag;
 import org.teavm.backend.wasm.model.WasmType;
 import org.teavm.backend.wasm.model.expression.WasmArrayGet;
 import org.teavm.backend.wasm.model.expression.WasmArrayNewFixed;
 import org.teavm.backend.wasm.model.expression.WasmBlock;
 import org.teavm.backend.wasm.model.expression.WasmCall;
 import org.teavm.backend.wasm.model.expression.WasmCallReference;
-import org.teavm.backend.wasm.model.expression.WasmCast;
 import org.teavm.backend.wasm.model.expression.WasmCastBranch;
 import org.teavm.backend.wasm.model.expression.WasmCastCondition;
 import org.teavm.backend.wasm.model.expression.WasmDrop;
@@ -62,6 +62,8 @@ import org.teavm.backend.wasm.model.expression.WasmSignedType;
 import org.teavm.backend.wasm.model.expression.WasmStructGet;
 import org.teavm.backend.wasm.model.expression.WasmStructNew;
 import org.teavm.backend.wasm.model.expression.WasmStructSet;
+import org.teavm.backend.wasm.model.expression.WasmThrow;
+import org.teavm.backend.wasm.runtime.WasmGCSupport;
 import org.teavm.backend.wasm.vtable.WasmGCVirtualTableProvider;
 import org.teavm.dependency.DependencyInfo;
 import org.teavm.model.AccessLevel;
@@ -97,6 +99,8 @@ public class ReflectionMetadataGenerator {
     private WasmGCVirtualTableProvider virtualTables;
     private boolean innerClassesRequired;
     private Set<String> innerClassesAccessed = new HashSet<>();
+    private WasmTag exceptionTag;
+    private WasmFunction cceFunction;
 
     private WasmFunction initFunction;
 
@@ -104,7 +108,7 @@ public class ReflectionMetadataGenerator {
             DependencyInfo dependencies, ReflectionDependencyListener reflection, ListableClassReaderSource classes,
             WasmGCClassInfoProvider classInfoProvider, BaseWasmFunctionRepository functions,
             WasmGCTypeMapper typeMapper, WasmGCStringProvider strings, ClassInitializerInfo classInitInfo,
-            WasmGCVirtualTableProvider virtualTables) {
+            WasmGCVirtualTableProvider virtualTables, WasmTag exceptionTag) {
         this.names = names;
         this.module = module;
         this.functionTypes = functionTypes;
@@ -117,6 +121,7 @@ public class ReflectionMetadataGenerator {
         this.strings = strings;
         this.classInitInfo = classInitInfo;
         this.virtualTables = virtualTables;
+        this.exceptionTag = exceptionTag;
 
         var fn = new WasmFunction(functionTypes.of(null));
         fn.setName(names.topLevel("teavm@initReflection"));
@@ -126,6 +131,14 @@ public class ReflectionMetadataGenerator {
 
     public WasmFunction initFunction() {
         return initFunction;
+    }
+
+    private WasmFunction cceMethod() {
+        if (cceFunction == null) {
+            cceFunction = functions.forStaticMethod(
+                    new MethodReference(WasmGCSupport.class, "cce", ClassCastException.class));
+        }
+        return cceFunction;
     }
 
     public void generate() {
@@ -860,7 +873,9 @@ public class ReflectionMetadataGenerator {
         check.getBody().add(new WasmCastBranch(WasmCastCondition.SUCCESS, expr, sourceType,
                 (WasmType.Reference) targetType, check));
         check.getBody().add(new WasmDrop(new WasmPop(sourceType)));
-        check.getBody().add(new WasmNullConstant((WasmType.Reference) targetType));
+        var cceThrow = new WasmThrow(exceptionTag);
+        cceThrow.getArguments().add(new WasmCall(cceMethod()));
+        check.getBody().add(cceThrow);
         return check;
     }
 
@@ -875,7 +890,9 @@ public class ReflectionMetadataGenerator {
         unboxBlock.getBody().add(new WasmCastBranch(WasmCastCondition.SUCCESS, expr,
                 sourceType, targetType, unboxBlock));
         unboxBlock.getBody().add(new WasmDrop(new WasmPop(sourceType)));
-        unboxBlock.getBody().add(new WasmNullConstant(targetType));
+        var cceThrow = new WasmThrow(exceptionTag);
+        cceThrow.getArguments().add(new WasmCall(cceMethod()));
+        unboxBlock.getBody().add(cceThrow);
         return new WasmCall(function, unboxBlock);
     }
 

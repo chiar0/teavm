@@ -37,7 +37,7 @@ public class TMethod extends TExecutable implements TMember {
     public TClass<?> getReturnType() {
         var returnType = methodInfo.returnType();
         if (returnType == null) {
-            return null;
+            return (TClass<?>) (Object) void.class;
         }
         return (TClass<?>) (Object) ClassInfoUtil.resolve(returnType).classObject();
     }

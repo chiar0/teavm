@@ -210,13 +210,7 @@ public final class TClass<T> extends TObject implements TGenericDeclaration, TTy
         if (declaredFields == null) {
             var reflection = classInfo.reflection();
             if (reflection == null) {
-                var className = classInfo.name();
-                var nameStr = className != null ? className.getStringObject() : "<unknown>";
-                throw new RuntimeException(
-                    "Class " + nameStr + " has no reflection metadata. "
-                    + "getDeclaredFields() requires the class to be in the TeaVM reflection metadata. "
-                    + "Ensure the class is reachable from the static call graph via getDeclaredFields() calls, "
-                    + "or register it in a ReflectionSupplier (e.g., LudiiReflectionSupplier).");
+                return new TField[0];
             }
             var count = reflection.fieldCount();
             declaredFields = new TField[count];
@@ -742,9 +736,17 @@ public final class TClass<T> extends TObject implements TGenericDeclaration, TTy
     }
 
     public TPackage getPackage() {
-        String name = getName();
-        name = name.substring(0, name.lastIndexOf('.') + 1);
-        return TPackage.getPackage(name);
+        TClass<?> cls = this;
+        while (cls.isArray()) {
+            cls = cls.getComponentType();
+        }
+        String fullName = cls.getName();
+        if (fullName == null) {
+            return TPackage.getPackage("");
+        }
+        int lastDot = fullName.lastIndexOf('.');
+        String pkgName = lastDot >= 0 ? fullName.substring(0, lastDot) : "";
+        return TPackage.getPackage(pkgName);
     }
 
     @SuppressWarnings("unchecked")

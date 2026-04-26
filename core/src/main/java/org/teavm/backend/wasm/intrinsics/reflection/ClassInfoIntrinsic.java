@@ -182,7 +182,8 @@ public class ClassInfoIntrinsic implements WasmGCIntrinsic {
                 var metadataGen = new ReflectionMetadataGenerator(context.names(), context.module(),
                         context.functionTypes(), context.dependency(), reflection, context.classes(),
                         context.classInfoProvider(), context.functions(), context.typeMapper(),
-                        context.strings(), context.classInitInfo(), context.virtualTables());
+                        context.strings(), context.classInitInfo(), context.virtualTables(),
+                        context.exceptionTag());
                 metadataGen.generate();
                 context.addToInitializer(fn -> fn.getBody().add(new WasmCall(metadataGen.initFunction())));
                 return fieldAccess(invocation, context, ClassInfoStruct::reflectionInfoIndex);
