@@ -605,12 +605,16 @@ public class WasmGCGenerationVisitor extends BaseWasmGenerationVisitor {
             }
         }
 
+        // Force sourceType to nullable for br_on_cast type compatibility.
+        // br_on_cast requires target ⊑ source; if target is nullable,
+        // source must also be nullable (nullable is supertype of non-nullable).
+        if (!sourceType.isNullable() && sourceType instanceof WasmType.CompositeReference) {
+            sourceType = ((WasmType.CompositeReference) sourceType).composite.getReference();
+        }
+
         var canInsertCast = true;
         if (targetStruct != null && sourceType instanceof WasmType.CompositeReference) {
             var sourceComposite = (WasmType.CompositeReference) sourceType;
-            if (!sourceType.isNullable()) {
-                sourceType = sourceComposite.composite.getReference();
-            }
             var sourceStruct = (WasmStructure) sourceComposite.composite;
             if (targetStruct.isSupertypeOf(sourceStruct)) {
                 canInsertCast = false;
