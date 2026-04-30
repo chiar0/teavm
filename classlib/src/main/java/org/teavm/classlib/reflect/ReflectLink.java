@@ -116,37 +116,32 @@ public final class ReflectLink {
     }
 
     private static org.teavm.runtime.reflect.ClassInfo getClassInfo(Class<?> clazz) {
-        if (clazz == null) return null;
+        // WASM GC: avoid early returns and try-catch to prevent branch type divergence
+        // between ClassInfo (struct 26) and Object (struct 36) in the exit block.
+        org.teavm.runtime.reflect.ClassInfo result = null;
+        if (clazz == null) return result;
 
-        // Skip cache entirely to avoid WASM GC type divergence from erased
-        // IdentityHashMap.get() (returns Object=type36 vs ClassInfo=type26).
-        // Direct lookup only — cache is only beneficial in JS backend.
-
-        try {
-            org.teavm.runtime.reflect.ClassInfo ci = TClass.getClassInfoOfClass(clazz);
-            if (ci != null) {
-                try {
-                    var ignored = ci.name();
-                    return ci;
-                } catch (Throwable t) {
-                    // not a valid ClassInfo — fall through
-                }
+        org.teavm.runtime.reflect.ClassInfo ci = TClass.getClassInfoOfClass(clazz);
+        if (ci != null) {
+            org.teavm.runtime.reflect.TStringAbstract n = ci.name();
+            if (n != null) {
+                result = ci;
             }
-        } catch (Throwable ignored) {}
+        }
 
-        try {
+        if (result == null) {
             String name = clazz.getName();
             org.teavm.runtime.reflect.ClassInfo.rewind();
-            while (org.teavm.runtime.reflect.ClassInfo.hasNext()) {
+            while (result == null && org.teavm.runtime.reflect.ClassInfo.hasNext()) {
                 org.teavm.runtime.reflect.ClassInfo candidate = org.teavm.runtime.reflect.ClassInfo.next();
-                var candidateName = candidate.name();
+                org.teavm.runtime.reflect.TStringAbstract candidateName = candidate.name();
                 if (candidateName != null && name.equals(candidateName.getStringObject())) {
-                    return candidate;
+                    result = candidate;
                 }
             }
-        } catch (Throwable ignored) {}
+        }
 
-        return null;
+        return result;
     }
 
     // ═══════════════════════════════════════════════════════════════════════
