@@ -165,7 +165,7 @@ class JavaError extends Error {
         (context.exports["teavm.setJsException"] as Function)(javaException, this);
     }
 
-    get message(): string {
+    override get message(): string {
         const exceptionMessage = this.#context.exports["teavm.exceptionMessage"];
         const stringToJs = this.#context.exports["teavm.stringToJs"];
         if (typeof exceptionMessage === "function" && typeof stringToJs === "function") {
@@ -370,7 +370,7 @@ class ReaderHelper {
         let result = 0;
         let shift = 0;
         while (true) {
-            const b = this.array[this.ptr++];
+            const b = this.array[this.ptr++]!;
             result |= (b & 0x7F) << shift;
             if ((b & 0x80) === 0) {
                 return result;
@@ -385,7 +385,7 @@ function extractDylinkInfo(module: WebAssembly.Module): DylinkInfo {
     if (sections.length !== 1) {
         return {};
     }
-    const section = new ReaderHelper(new Int8Array(sections[0]));
+    const section = new ReaderHelper(new Int8Array(sections[0]!));
     const dylinkInfo: DylinkInfo = {};
     while (section.ptr < section.array.length) {
         const subsectionType = section.array[section.ptr++];
@@ -438,10 +438,10 @@ function coreImports(imports: Record<string, unknown>, context: Context): void {
         takeStackTrace(exceptionClassName: string | null) {
             const stack = new Error().stack ?? "";
             const addresses: number[] = [];
-            for (const line of stack.split("\n")) {
+            for (const line of (stack ?? "").split("\n")) {
                 const match = exceptionFrameRegex.exec(line);
                 if (match !== null && match.length >= 2) {
-                    addresses.push(parseInt(match[1], 16));
+                    addresses.push(parseInt(match[1]!, 16));
                 }
             }
             return {
@@ -462,16 +462,16 @@ function coreImports(imports: Record<string, unknown>, context: Context): void {
                             line: address
                         }));
                     } else if (exceptionClassName !== null) {
-                        if (result.length > 0 && result[0].className === "java.lang.Throwable"
-                                && result[0].method === "fillInStackTrace") {
+                    if (result.length > 0 && result[0]!.className === "java.lang.Throwable"
+                                    && result[0]!.method === "fillInStackTrace") {
                             result.shift();
                         }
                         let foundIndex = -1;
                         for (let i = 0; i < result.length; ++i) {
-                            if (result[i].method !== "<init>") {
-                                break;
-                            }
-                            if (result[i].className === exceptionClassName) {
+                            if (result[i]!.method !== "<init>") {
+                                    break;
+                                }
+                                if (result[i]!.className === exceptionClassName) {
                                 foundIndex = i + 1;
                                 break;
                             }
@@ -558,11 +558,11 @@ function jsoImports(imports: Record<string, any>, context: Context, stringBuilti
         }
     }
     function javaExceptionToJs(e: unknown): unknown {
-        if (e instanceof WebAssembly.Exception) {
-            const tag = context.exports["teavm.javaException"] as WebAssembly.Tag;
+        if (e instanceof (WebAssembly as any).Exception) {
+            const tag = context.exports["teavm.javaException"] as any;
             const getJsException = context.exports["teavm.getJsException"] as Function;
-            if (e.is(tag)) {
-                const javaException = e.getArg(tag, 0);
+            if ((e as any).is(tag)) {
+                const javaException = (e as any).getArg(tag, 0);
                 const extracted = extractException(javaException);
                 if (extracted !== null) {
                     return extracted;
@@ -870,7 +870,7 @@ function jsoImports(imports: Record<string, any>, context: Context, stringBuilti
                     const fn = getGlobalName(method) as Function;
                     return fn(...args);
                 } else {
-                    return (instance as Record<string, Function>)[method](...args);
+                    return (instance as Record<string, Function>)[method]!(...args);
                 }
             } catch (e) {
                 rethrowJsAsJava(e);
@@ -1004,7 +1004,7 @@ export async function load(src: string | BufferSource, options?: LoadOptions): P
     const emscriptenModulePaths = options.emscriptenModules ?? {};
     const deobfuscatorOptions = options.stackDeobfuscator ?? {};
     const debugInfoLocation = deobfuscatorOptions.infoLocation ?? "auto";
-    const stringBuiltins = await hasStringBuiltins();
+    const stringBuiltins = !isNodeJs && await hasStringBuiltins();
     const compilationPromise = compileModule(src, isNodeJs, stringBuiltins);
     const [deobfuscatorFactory, module, debugInfo, emscriptenModules] = await Promise.all([
         deobfuscatorOptions.enabled
@@ -1057,10 +1057,10 @@ async function compileModule(src: string | BufferSource, isNodeJs: boolean,
         stringBuiltins: boolean): Promise<WebAssembly.Module> {
     const compileOptions = stringBuiltins ? { builtins: ["js-string"] as const } : {};
     if (typeof src !== "string") {
-        return await WebAssembly.compile(src, compileOptions);
+        return await (WebAssembly.compile as any)(src, compileOptions);
     }
     const [response, close] = await openPath(src, isNodeJs);
-    const result = await WebAssembly.compileStreaming(response, compileOptions);
+    const result = await (WebAssembly.compileStreaming as any)(response, compileOptions);
     close();
     return result;
 }
@@ -1078,7 +1078,7 @@ function hasStringBuiltins(): Promise<boolean> {
                 const response = new Response(bytes, {
                     headers: { "Content-Type": "application/wasm" }
                 });
-                const module = await WebAssembly.compileStreaming(response, { builtins: ["js-string"] });
+                const module = await (WebAssembly.compileStreaming as any)(response, { builtins: ["js-string"] });
                 await WebAssembly.instantiate(module, {});
                 return true;
             } catch (e) {

@@ -163,25 +163,32 @@ public class ReflectionMetadataGenerator {
         }
 
         for (var className : classes.getClassNames()) {
-            var annotations = annotationsByClass.get(className);
-            var cls = classes.get(className);
-            var fields = needFieldsMetadata && reflection.getClassesWithReflectableFields().contains(className)
-                    ? reflection.getAccessibleFields(className)
-                    : List.<String>of();
-            var methods = needMethodsMetadata && reflection.getClassesWithReflectableMethods().contains(className)
-                    ? reflection.getAccessibleMethods(className)
-                    : List.<MethodDescriptor>of();
-            var innerClasses = extractInnerClasses(cls);
-            var typeParameters = needTypeVars  ? cls.getGenericParameters() : new GenericTypeParameter[0];
-            var metadata = generateClassMetadata(className, annotations, fields, methods, typeParameters,
-                    innerClasses);
-            if (metadata != null) {
-                initFunction.getBody().add(new WasmStructSet(
-                        classInfoStruct.structure(),
-                        new WasmGetGlobal(classInfoProvider.getClassInfo(className).getPointer()),
-                        classInfoStruct.reflectionInfoIndex(),
-                        metadata
-                ));
+            try {
+                var annotations = annotationsByClass.get(className);
+                var cls = classes.get(className);
+                var accessibleFields = reflection.ensureAccessibleFields(className);
+                var fields = needFieldsMetadata && (reflection.getClassesWithReflectableFields().contains(className)
+                        || (accessibleFields != null && !accessibleFields.isEmpty()))
+                        ? accessibleFields
+                        : List.<String>of();
+                var methods = needMethodsMetadata && reflection.getClassesWithReflectableMethods().contains(className)
+                        ? reflection.getAccessibleMethods(className)
+                        : List.<MethodDescriptor>of();
+                var innerClasses = extractInnerClasses(cls);
+                var typeParameters = needTypeVars  ? cls.getGenericParameters() : new GenericTypeParameter[0];
+                var metadata = generateClassMetadata(className, annotations, fields, methods, typeParameters,
+                        innerClasses);
+                if (metadata != null) {
+                    initFunction.getBody().add(new WasmStructSet(
+                            classInfoStruct.structure(),
+                            new WasmGetGlobal(classInfoProvider.getClassInfo(className).getPointer()),
+                            classInfoStruct.reflectionInfoIndex(),
+                            metadata
+                    ));
+                }
+            } catch (Throwable e) {
+                System.err.println("[ReflectionMetadata] Failed to generate metadata for " + className + ": " + e.getMessage());
+                e.printStackTrace(System.err);
             }
         }
     }
@@ -223,10 +230,13 @@ public class ReflectionMetadataGenerator {
     private WasmExpression generateFields(String className, Collection<? extends String> fields) {
         var fieldInfoStruct = classInfoProvider.reflectionTypes().fieldInfo();
         if (fields.isEmpty()) {
-            return new WasmNullConstant(fieldInfoStruct.array().getReference());
+            return new WasmArrayNewFixed(fieldInfoStruct.array());
         }
 
         var cls = classes.get(className);
+        if (cls == null) {
+            return new WasmArrayNewFixed(fieldInfoStruct.array());
+        }
         var skipPrivates = ReflectionDependencyListener.shouldSkipPrivates(cls);
 
         var array = new WasmArrayNewFixed(fieldInfoStruct.array());
@@ -299,28 +309,23 @@ public class ReflectionMetadataGenerator {
     private WasmExpression generateMethods(String className, Collection<? extends MethodDescriptor> methods) {
         var methodInfoStruct = classInfoProvider.reflectionTypes().methodInfo();
         if (methods.isEmpty()) {
-            return new WasmNullConstant(methodInfoStruct.array().getReference());
+            return new WasmArrayNewFixed(methodInfoStruct.array());
         }
 
         var cls = classes.get(className);
         if (cls == null || cls.getMethods().isEmpty()) {
-            return new WasmNullConstant(methodInfoStruct.array().getReference());
+            return new WasmArrayNewFixed(methodInfoStruct.array());
         }
 
         var callerType = methodInfoStruct.callerType();
-        /*
-        var objectClass = classInfoProvider.getClassInfo("java.lang.Object");
-        var objectArrayClass = classInfoProvider.getClassInfo(ValueType.parse(Object[].class));
-        var objectArrayType = classInfoProvider.getObjectArrayType();
-        var withBounds = context.dependency().getMethod(TYPE_VAR_GET_BOUNDS) != null;
-        var withGenericReturn = context.dependency().getMethod(METHOD_GET_GENERIC_RETURN_TYPE) != null;
-        var withGenericParams = context.dependency().getMethod(EXECUTABLE_GET_GENERIC_PARAMETER_TYPES) != null;
-         */
 
         var result = new WasmArrayNewFixed(methodInfoStruct.array());
         var skipPrivates = ReflectionDependencyListener.shouldSkipPrivates(cls);
 
         for (var method : cls.getMethods()) {
+            if (!methods.contains(method.getDescriptor())) {
+                continue;
+            }
             if (skipPrivates) {
                 if (method.getLevel() == AccessLevel.PRIVATE || method.getLevel() == AccessLevel.PACKAGE_PRIVATE) {
                     continue;
@@ -350,8 +355,8 @@ public class ReflectionMetadataGenerator {
                 var paramTypes = method.getParameterTypes();
                 var derivedClassInfoStruct = classInfoProvider.reflectionTypes().derivedClassInfo();
                 if (paramTypes.length == 0) {
-                    methodInit.getInitializers().add(new WasmNullConstant(
-                            derivedClassInfoStruct.array().getReference()));
+                    methodInit.getInitializers().add(new WasmArrayNewFixed(
+                            derivedClassInfoStruct.array()));
                 } else {
                     var parametersArray = new WasmArrayNewFixed(derivedClassInfoStruct.array());
                     for (var param : paramTypes) {
@@ -391,10 +396,9 @@ public class ReflectionMetadataGenerator {
                     }
                     methodInit.getInitializers().add(namesArray);
                 } else {
-                    methodInit.getInitializers().add(new WasmNullConstant(
+                    methodInit.getInitializers().add(new WasmArrayNewFixed(
                             classInfoProvider.reflectionTypes().arrayTypeOf(
-                                    classInfoProvider.getClassInfo("java.lang.String").getType().asStorage())
-                                    .getReference()));
+                                    classInfoProvider.getClassInfo("java.lang.String").getType().asStorage())));
                 }
             }
         }
@@ -451,7 +455,7 @@ public class ReflectionMetadataGenerator {
                 }
                 result.getInitializers().add(array);
             } else {
-                result.getInitializers().add(new WasmNullConstant(reflectionTypes.genericTypeArray().getReference()));
+                result.getInitializers().add(new WasmArrayNewFixed(reflectionTypes.genericTypeArray()));
             }
         }
 
@@ -461,8 +465,8 @@ public class ReflectionMetadataGenerator {
 
         if (methodReflectionStruct.typeParametersIndex() >= 0) {
             if (typeParameters == null || typeParameters.length == 0) {
-                result.getInitializers().add(new WasmNullConstant(reflectionTypes.typeVariableInfo()
-                        .array().getReference()));
+                result.getInitializers().add(new WasmArrayNewFixed(reflectionTypes.typeVariableInfo()
+                        .array()));
             } else {
                 result.getInitializers().add(generateTypeParameters(typeParameters, cls, method));
             }
@@ -483,7 +487,7 @@ public class ReflectionMetadataGenerator {
 
         var paramCount = method.parameterCount();
         if (paramCount == 0) {
-            return new WasmNullConstant(outerArrayType.getReference());
+            return new WasmArrayNewFixed(outerArrayType);
         }
 
         var outerArray = new WasmArrayNewFixed(outerArrayType);
@@ -493,7 +497,7 @@ public class ReflectionMetadataGenerator {
             var runtimeAnnot = AnnotationGenerationHelper.collectRuntimeAnnotations(
                     classes, paramAnnotContainer.all());
             if (runtimeAnnot.isEmpty()) {
-                outerArray.getElements().add(new WasmNullConstant(innerArrayType.getReference()));
+                outerArray.getElements().add(new WasmArrayNewFixed(innerArrayType));
             } else {
                 var innerArray = new WasmArrayNewFixed(innerArrayType);
                 for (var annotation : runtimeAnnot) {
@@ -520,7 +524,7 @@ public class ReflectionMetadataGenerator {
         var annotationInfoStruct = classInfoProvider.reflectionTypes().annotationInfo();
 
         if (annotations == null || annotations.isEmpty()) {
-            return new WasmNullConstant(annotationInfoStruct.array().getReference());
+            return new WasmArrayNewFixed(annotationInfoStruct.array());
         }
 
         var annotationsExpr = new WasmArrayNewFixed(annotationInfoStruct.array());
@@ -580,13 +584,18 @@ public class ReflectionMetadataGenerator {
                     return new WasmInt32Constant(-1);
                 }
                 var index = 0;
+                var found = false;
                 for (var field : enumClass.getFields()) {
-                    if (field.hasModifier(ElementModifier.ENUM) || field.hasModifier(ElementModifier.STATIC)) {
+                    if (field.hasModifier(ElementModifier.ENUM)) {
                         if (field.getName().equals(value.getEnumValue().getFieldName())) {
+                            found = true;
                             break;
                         }
                         ++index;
                     }
+                }
+                if (!found) {
+                    return new WasmInt32Constant(-1);
                 }
                 return new WasmInt32Constant(index);
             }
@@ -1056,7 +1065,7 @@ public class ReflectionMetadataGenerator {
 
     private WasmExpression generateInnerClasses(List<? extends String> innerClasses) {
         if (innerClasses.isEmpty()) {
-            return new WasmNullConstant(classInfoProvider.reflectionTypes().classInfo().array().getReference());
+            return new WasmArrayNewFixed(classInfoProvider.reflectionTypes().classInfo().array());
         }
         var array = new WasmArrayNewFixed(classInfoProvider.reflectionTypes().classInfo().array());
         for (var innerClass : innerClasses) {

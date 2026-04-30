@@ -21,7 +21,11 @@ public class WasmNullConstant extends WasmExpression {
     public WasmType.Reference type;
 
     public WasmNullConstant(WasmType.Reference type) {
-        this.type = type;
+        if (type instanceof WasmType.CompositeReference && !type.isNullable()) {
+            this.type = ((WasmType.CompositeReference) type).composite.getReference();
+        } else {
+            this.type = type;
+        }
     }
 
     public WasmType.Reference getType() {

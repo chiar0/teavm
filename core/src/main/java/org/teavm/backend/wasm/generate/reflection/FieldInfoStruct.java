@@ -81,14 +81,16 @@ public class FieldInfoStruct {
             var infoType = classInfoProvider.reflectionTypes().derivedClassInfo().structure().getReference();
             fields.add(new WasmField(infoType, "type"));
         }
-        if (dependencies.getMethod(new MethodReference(FieldInfo.class, "read", Object.class, Object.class)) != null) {
+        // Reader and writer slots are allocated unconditionally.
+        // Without this, the dependency analysis may not reach FieldInfo.read/write,
+        // leaving writerIndex at -1 and making Field.set() silently fail for all fields.
+        {
             var objType = classInfoProvider.getClassInfo("java.lang.Object").getType();
             readerType = functionTypes.of(objType, objType);
             readerIndex = fields.size();
             fields.add(new WasmField(readerType, "reader"));
         }
-        if (dependencies.getMethod(new MethodReference(FieldInfo.class, "write", Object.class, Object.class,
-                void.class)) != null) {
+        {
             var objType = classInfoProvider.getClassInfo("java.lang.Object").getType();
             writerType = functionTypes.of(null, objType, objType);
             writerIndex = fields.size();

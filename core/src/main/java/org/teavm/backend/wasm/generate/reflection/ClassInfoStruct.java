@@ -263,7 +263,7 @@ public class ClassInfoStruct {
 
         var newInstanceMethod = dependencies.getMethod(new MethodReference(ClassInfo.class, "newInstance",
                 Object.class));
-        if (newInstanceMethod != null && newInstanceMethod.isUsed()) {
+        if (true) {
             var objectClass = classInfoProvider.getClassInfo("java.lang.Object");
             createInstanceIndex = fields.size();
             fields.add(new WasmField(functionTypes.of(objectClass.getType()), "createInstance"));
@@ -273,7 +273,7 @@ public class ClassInfoStruct {
 
         var reflectionInfoMethod = dependencies.getMethod(new MethodReference(ClassInfo.class, "reflection",
                 ClassReflectionInfo.class));
-        if (reflectionInfoMethod != null && reflectionInfoMethod.isUsed()) {
+        if (true) {
             reflectionInfoIndex = fields.size();
             fields.add(new WasmField(reflectionTypes.classReflectionInfo().structure(), "reflection"));
         }

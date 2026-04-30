@@ -459,17 +459,26 @@ public final class TCollections extends TObject {
 
     public static <T> TList<T> unmodifiableList(final TList<? extends T> list) {
         TObjects.requireNonNull(list);
-        return new TAbstractList<>() {
-            @Override public T get(int index) {
-                return list.get(index);
-            }
-            @Override public int size() {
-                return list.size();
-            }
-            @Override public boolean remove(Object o) {
-                throw new UnsupportedOperationException();
-            }
-        };
+        return new UnmodifiableList<>(list);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static final class UnmodifiableList<T> extends TAbstractList<T> {
+        private final TList list;
+
+        UnmodifiableList(TList<? extends T> list) {
+            this.list = list;
+        }
+
+        @Override @SuppressWarnings("unchecked") public T get(int index) {
+            return (T) list.get(index);
+        }
+        @Override public int size() {
+            return list.size();
+        }
+        @Override public boolean remove(Object o) {
+            throw new UnsupportedOperationException();
+        }
     }
 
     public static <T> TCollection<T> unmodifiableCollection(final TCollection<? extends T> c) {

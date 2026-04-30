@@ -86,6 +86,8 @@ public final class ClassInfo extends ReflectionInfo {
 
     public native Object newInstance();
 
+    public native Object rawNewInstance();
+
     public native boolean initializeNewInstance(Object instance);
 
     public native void initialize();

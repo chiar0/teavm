@@ -13,15 +13,11 @@
  *  See the License for the specific language governing permissions and
  *  limitations under the License.
  */
-package org.teavm.classlib.java.lang;
+package org.teavm.classlib.java.security;
 
-public class TArrayStoreException extends TRuntimeException {
-    private static final long serialVersionUID = 1L;
+public class TProtectionDomain {
 
-    public TArrayStoreException() {
-    }
-
-    public TArrayStoreException(String message) {
-        super(message);
+    public TCodeSource getCodeSource() {
+        return null;
     }
 }

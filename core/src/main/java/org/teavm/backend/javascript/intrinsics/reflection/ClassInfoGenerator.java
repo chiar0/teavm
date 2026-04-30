@@ -79,6 +79,16 @@ public class ClassInfoGenerator implements Injector, Generator {
                 context.getWriter().append("new ");
                 context.writeExpr(context.getArgument(0), Precedence.MEMBER_ACCESS);
                 break;
+            case "rawNewInstance": {
+                var writer = context.getWriter();
+                writer.append("(function(cls){");
+                writer.append("if(typeof cls==='function')return Object.create(cls.prototype);");
+                writer.append("return null;");
+                writer.append("})(");
+                context.writeExpr(context.getArgument(0), Precedence.min());
+                writer.append(")");
+                break;
+            }
             case "initializeNewInstance":
                 context.getWriter().appendFunction("$rt_callDefaultConstructor").append("(");
                 context.writeExpr(context.getArgument(0), Precedence.min());

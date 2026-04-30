@@ -85,6 +85,23 @@ let $rt_callDefaultConstructor = (cls, obj) => {
     return true;
 }
 
+let $rt_rawAlloc = classInfo => {
+    // classInfo should be the JS constructor function for the class.
+    // The TeaVM JS backend represents ClassInfo objects as constructor functions.
+    // Raw allocation: create object with correct prototype without calling constructor.
+    if (typeof classInfo === "function" && classInfo.prototype) {
+        return Object.create(classInfo.prototype);
+    }
+    // Fallback: try $rt_cls to get the actual constructor
+    try {
+        let cls = classInfo && classInfo.classObject ? classInfo.classObject() : null;
+        if (typeof cls === "function" && cls.prototype) {
+            return Object.create(cls.prototype);
+        }
+    } catch (e) { /* ignore */ }
+    return null;
+}
+
 let $rt_getFieldValue = (field, obj) => {
     if (typeof field.reader !== "function") return null;
     try {

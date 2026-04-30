@@ -17,6 +17,7 @@ package org.teavm.classlib.java.lang;
 
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
+import java.net.URL;
 import org.teavm.backend.javascript.spi.InjectedBy;
 import org.teavm.classlib.impl.Base64Impl;
 import org.teavm.interop.NoSideEffects;
@@ -63,6 +64,14 @@ public abstract class TClassLoader extends TObject {
 
     public static InputStream getSystemResourceAsStream(String name) {
         return getSystemClassLoader().getResourceAsStream(name);
+    }
+
+    public URL getResource(String name) {
+        return null;
+    }
+
+    public TClass<?> loadClass(String name) throws TClassNotFoundException {
+        return null;
     }
 
     @JSBody(params = "resource", script = "return resource !== null && resource !== void 0 ? resource : null;")

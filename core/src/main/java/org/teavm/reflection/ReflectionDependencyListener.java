@@ -36,6 +36,7 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -121,6 +122,7 @@ public class ReflectionDependencyListener extends AbstractDependencyListener {
     private boolean callReached;
     private AnnotationGenerationHelper annotHelper;
     private boolean withGenerics;
+    private DependencyAgent agent;
 
     public ReflectionDependencyListener(List<ReflectionSupplier> reflectionSuppliers,
             AnnotationGenerationHelper annotHelper) {
@@ -150,6 +152,7 @@ public class ReflectionDependencyListener extends AbstractDependencyListener {
 
     @Override
     public void started(DependencyAgent agent) {
+        this.agent = agent;
         allClasses = agent.createNode();
         typesInReflectableSignaturesNode = agent.createNode();
         typesInGenericReflectableSignaturesNode = agent.createNode();
@@ -210,6 +213,14 @@ public class ReflectionDependencyListener extends AbstractDependencyListener {
 
     public Set<String> getAccessibleFields(String className) {
         return accessibleFieldCache.get(className);
+    }
+
+    public Set<String> ensureAccessibleFields(String className) {
+        if (agent == null) {
+            return Collections.emptySet();
+        }
+        return accessibleFieldCache.computeIfAbsent(className,
+                key -> gatherAccessibleFields(agent, key));
     }
 
     public Set<MethodDescriptor> getAccessibleMethods(String className) {
@@ -454,6 +465,11 @@ public class ReflectionDependencyListener extends AbstractDependencyListener {
                 .addLocation(location)
                 .getVariable(0).getClassValueNode();
         getReached = true;
+
+        // Ensure FieldInfo.read is linked when Field.get is used.
+        agent.linkMethod(new MethodReference(
+                org.teavm.runtime.reflect.FieldInfo.class,
+                "read", Object.class, Object.class)).use();
         classValueNode.addConsumer(reflectedType -> {
             if (!(reflectedType.getValueType() instanceof ValueType.Object)) {
                 return;
@@ -486,6 +502,16 @@ public class ReflectionDependencyListener extends AbstractDependencyListener {
                 .addLocation(location)
                 .getVariable(0).getClassValueNode();
         setReached = true;
+
+        // Ensure FieldInfo.read and FieldInfo.write are always linked when Field.set is used.
+        // Without this, the FieldInfoStruct may not allocate reader/writer slots,
+        // causing null function pointers at runtime.
+        agent.linkMethod(new MethodReference(
+                org.teavm.runtime.reflect.FieldInfo.class,
+                "read", Object.class, Object.class)).use();
+        agent.linkMethod(new MethodReference(
+                org.teavm.runtime.reflect.FieldInfo.class,
+                "write", Object.class, Object.class, void.class)).use();
         classValueNode.addConsumer(reflectedType -> {
             if (!(reflectedType.getValueType() instanceof ValueType.Object)) {
                 return;

@@ -3,12 +3,14 @@ package gnu.trove.list.array;
 import java.util.Random;
 
 import gnu.trove.TIntCollection;
+import gnu.trove.iterator.TIntIterator;
+import gnu.trove.procedure.TIntProcedure;
 
 /**
  * TeaVM-compatible replacement for Trove's TIntArrayList.
  * Uses internal int[] storage instead of sun.misc.Unsafe.
  */
-public class TIntArrayList {
+public class TIntArrayList implements TIntCollection {
 
     protected int no_entry_value;
     private int[] data;
@@ -19,7 +21,25 @@ public class TIntArrayList {
     public TIntArrayList() { this(DEFAULT_CAPACITY); }
     public TIntArrayList(int capacity) { data = new int[Math.max(1, capacity)]; size = 0; }
     public TIntArrayList(int[] values) { data = values.clone(); size = values.length; }
-    public TIntArrayList(TIntCollection c) { this(c.size()); for (gnu.trove.iterator.TIntIterator it = c.iterator(); it.hasNext(); ) add(it.next()); }
+    public TIntArrayList(TIntArrayList other) {
+        data = new int[Math.max(1, other.size)];
+        System.arraycopy(other.data, 0, data, 0, other.size);
+        size = other.size;
+        no_entry_value = other.no_entry_value;
+    }
+    public TIntArrayList(TIntCollection c) {
+        this(c.size());
+        if (c instanceof TIntArrayList) {
+            TIntArrayList other = (TIntArrayList) c;
+            System.arraycopy(other.data, 0, data, 0, other.size);
+            size = other.size;
+        } else {
+            TIntIterator it = c.iterator();
+            while (it.hasNext()) {
+                add(it.next());
+            }
+        }
+    }
 
     public int getNoEntryValue() { return no_entry_value; }
     public void setNoEntryValue(int v) { no_entry_value = v; }
@@ -124,6 +144,13 @@ public class TIntArrayList {
     }
 
     public boolean addAll(TIntCollection c) {
+        if (c instanceof TIntArrayList) {
+            TIntArrayList other = (TIntArrayList) c;
+            grow(size + other.size);
+            System.arraycopy(other.data, 0, data, size, other.size);
+            size += other.size;
+            return other.size > 0;
+        }
         boolean modified = false;
         for (gnu.trove.iterator.TIntIterator it = c.iterator(); it.hasNext(); ) {
             add(it.next());
@@ -133,6 +160,14 @@ public class TIntArrayList {
     }
 
     public boolean removeAll(TIntCollection c) {
+        if (c instanceof TIntArrayList) {
+            TIntArrayList other = (TIntArrayList) c;
+            boolean modified = false;
+            for (int i = 0; i < other.size; i++) {
+                if (remove(other.data[i])) modified = true;
+            }
+            return modified;
+        }
         boolean modified = false;
         for (gnu.trove.iterator.TIntIterator it = c.iterator(); it.hasNext(); ) {
             if (remove(it.next())) modified = true;
@@ -230,5 +265,101 @@ public class TIntArrayList {
         int s = 0;
         for (int i = 0; i < size; i++) s += data[i];
         return s;
+    }
+
+    public TIntIterator iterator() {
+        return new TIntArrayIterator(this);
+    }
+
+    public boolean containsAll(TIntCollection c) {
+        if (c instanceof TIntArrayList) {
+            TIntArrayList other = (TIntArrayList) c;
+            for (int i = 0; i < other.size; i++) {
+                if (!contains(other.data[i])) return false;
+            }
+            return true;
+        }
+        TIntIterator it = c.iterator();
+        while (it.hasNext()) if (!contains(it.next())) return false;
+        return true;
+    }
+
+    public boolean containsAll(java.util.Collection<?> c) {
+        for (Object o : c) if (!contains(((Integer) o).intValue())) return false;
+        return true;
+    }
+
+    public boolean containsAll(int[] a) {
+        for (int v : a) if (!contains(v)) return false;
+        return true;
+    }
+
+    public boolean addAll(java.util.Collection<? extends Integer> c) {
+        boolean modified = false;
+        for (Integer i : c) { add(i.intValue()); modified = true; }
+        return modified;
+    }
+
+    public boolean addAll(int[] a) {
+        add(a); return true;
+    }
+
+    public boolean retainAll(java.util.Collection<?> c) {
+        throw new UnsupportedOperationException();
+    }
+
+    public boolean retainAll(TIntCollection c) {
+        throw new UnsupportedOperationException();
+    }
+
+    public boolean retainAll(int[] a) {
+        throw new UnsupportedOperationException();
+    }
+
+    public boolean removeAll(java.util.Collection<?> c) {
+        boolean modified = false;
+        for (Object o : c) if (remove(((Integer) o).intValue())) modified = true;
+        return modified;
+    }
+
+    public boolean removeAll(int[] a) {
+        boolean modified = false;
+        for (int v : a) if (remove(v)) modified = true;
+        return modified;
+    }
+
+    public boolean forEach(TIntProcedure procedure) {
+        for (int i = 0; i < size; i++) if (!procedure.execute(data[i])) return false;
+        return true;
+    }
+
+    static class TIntArrayIterator implements TIntIterator {
+        private final TIntArrayList list;
+        private int _index;
+        private int _lastReturned = -1;
+
+        TIntArrayIterator(TIntArrayList list) {
+            this.list = list;
+        }
+
+        public boolean hasNext() {
+            return _index < list.size;
+        }
+
+        public int next() {
+            if (!hasNext()) throw new IndexOutOfBoundsException();
+            _lastReturned = _index;
+            return list.data[_index++];
+        }
+
+        public void remove() {
+            if (_lastReturned < 0) throw new IllegalStateException();
+            int idx = _lastReturned;
+            _index--;
+            _lastReturned = -1;
+            int moved = list.size - idx - 1;
+            if (moved > 0) System.arraycopy(list.data, idx + 1, list.data, idx, moved);
+            list.size--;
+        }
     }
 }

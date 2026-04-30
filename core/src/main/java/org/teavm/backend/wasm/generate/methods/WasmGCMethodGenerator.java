@@ -218,6 +218,18 @@ public class WasmGCMethodGenerator implements BaseWasmFunctionRepository {
         MethodHolder method = null;
         if (cls != null) {
             method = cls.getMethod(methodReference.getDescriptor());
+            if (method == null) {
+                // Fallback: try matching by name for known TeaVM runtime methods
+                for (var m : cls.getMethods()) {
+                    if (m.getName().equals(methodReference.getName())) {
+                        method = m;
+                        break;
+                    }
+                }
+            }
+        }
+        if (method == null) {
+            return null;
         }
 
         var returnType = typeMapper.mapType(methodReference.getReturnType());
@@ -306,6 +318,8 @@ public class WasmGCMethodGenerator implements BaseWasmFunctionRepository {
 
     private void generateMethodBody(MethodHolder method, WasmFunction function) {
         try {
+            var ref = method.getReference();
+            System.err.println("GEN: " + ref.getClassName() + "::" + ref.getName());
             var customGenerator = customGenerators.get(method.getReference());
             if (customGenerator != null) {
                 generateCustomMethodBody(customGenerator, method.getReference(), function);
@@ -314,7 +328,7 @@ public class WasmGCMethodGenerator implements BaseWasmFunctionRepository {
             } else {
                 generateNativeMethodBody(method, function);
             }
-        } catch (RuntimeException e) {
+        } catch (Throwable e) {
             var buffer = new StringWriter();
             var printWriter = new PrintWriter(buffer);
             e.printStackTrace(printWriter);

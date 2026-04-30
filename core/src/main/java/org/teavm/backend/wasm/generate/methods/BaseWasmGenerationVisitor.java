@@ -480,8 +480,13 @@ public abstract class BaseWasmGenerationVisitor implements StatementVisitor, Exp
             return result;
         }
         result.acceptVisitor(typeInference);
-        block.setType(typeInference.getSingleResult().asBlock());
-        var cachedValue = exprCache.create(result, typeInference.getSingleResult(), location, block.getBody());
+        var inferredType = typeInference.getSingleResult();
+        if (inferredType instanceof WasmType.CompositeReference
+                && !((WasmType.CompositeReference) inferredType).isNullable()) {
+            inferredType = ((WasmType.CompositeReference) inferredType).composite.getReference();
+        }
+        block.setType(inferredType.asBlock());
+        var cachedValue = exprCache.create(result, inferredType, location, block.getBody());
 
         var check = new WasmBranch(negate(genIsNull(cachedValue.expr())), block);
         check.setResult(cachedValue.expr());
@@ -1179,7 +1184,7 @@ public abstract class BaseWasmGenerationVisitor implements StatementVisitor, Exp
             var valueToCast = exprCache.create(result, wasmSourceType, expr.getLocation(), block.getBody());
 
             var nullCheck = new WasmBranch(genIsNull(valueToCast.expr()), block);
-            nullCheck.setResult(nullLiteral(wasmTargetType));
+            nullCheck.setResult(nullLiteral(wasmSourceType));
             block.getBody().add(new WasmDrop(nullCheck));
 
             var supertypeCall = generateInstanceOf(valueToCast.expr(), expr.getTarget());

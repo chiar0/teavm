@@ -17,6 +17,7 @@ package org.teavm.classlib.java.lang;
 
 import java.io.InputStream;
 import java.lang.reflect.Modifier;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -85,12 +86,31 @@ public final class TClass<T> extends TObject implements TGenericDeclaration, TTy
         return classInfo;
     }
 
+    /**
+     * Reads the classInfo field from any Class object. Takes Object to avoid
+     * generating (TClass) casts in calling code that cause WASM GC validation
+     * errors. Since Class and TClass are the same struct in TeaVM, this is safe.
+     */
+    public static ClassInfo getClassInfoOfClass(Object classObj) {
+        return ((TClass<?>) classObj).classInfo;
+    }
+
     public boolean isInstance(Object obj) {
         return obj != null && isAssignableFrom((TClass<?>) (Object) obj.getClass());
     }
 
     public boolean isAssignableFrom(TClass<?> obj) {
-        return classInfo.isSuperTypeOf(obj.classInfo);
+        if (obj == null) return false;
+        if (this == obj) return true;
+        TClass<?> current = obj;
+        while (current != null) {
+            if (current == this) return true;
+            for (TClass<?> iface : current.getInterfaces()) {
+                if (iface == this) return true;
+            }
+            current = current.getSuperclass();
+        }
+        return false;
     }
 
     public String getName() {
@@ -297,29 +317,72 @@ public final class TClass<T> extends TObject implements TGenericDeclaration, TTy
     @SuppressWarnings({ "raw", "unchecked" })
     public TConstructor<?>[] getDeclaredConstructors() throws TSecurityException {
         if (declaredConstructors == null) {
+            if (classInfo == null) {
+                declaredConstructors = new TConstructor[0];
+                return declaredConstructors.clone();
+            }
+            if (isPrimitive()) {
+                declaredConstructors = new TConstructor[0];
+                return declaredConstructors.clone();
+            }
+            if (isArray()) {
+                declaredConstructors = new TConstructor[0];
+                return declaredConstructors.clone();
+            }
             var reflection = classInfo.reflection();
             if (reflection == null) {
                 declaredConstructors = new TConstructor[0];
-            } else {
-                var total = reflection.methodCount();
-                var count = 0;
-                for (var i = 0; i < total; ++i) {
-                    if (reflection.method(i).name().getStringObject().equals("<init>")) {
-                        ++count;
-                    }
-                }
-                declaredConstructors = new TConstructor[count];
-                var j = 0;
-                for (var i = 0; i < total; ++i) {
-                    var info = reflection.method(i);
-                    if (!info.name().getStringObject().equals("<init>")) {
-                        continue;
-                    }
-                    declaredConstructors[j++] = new TConstructor<>(this, info);
-                }
+                return declaredConstructors.clone();
+            }
+            var total = reflection.methodCount();
+            var count = 0;
+            for (var i = 0; i < total; ++i) {
+                if (reflection.method(i).name().getStringObject().equals("<init>")) ++count;
+            }
+            declaredConstructors = new TConstructor[count];
+            var j = 0;
+            for (var i = 0; i < total; ++i) {
+                var info = reflection.method(i);
+                if (!info.name().getStringObject().equals("<init>")) continue;
+                declaredConstructors[j++] = new TConstructor<>(this, info);
             }
         }
         return declaredConstructors.clone();
+    }
+
+    public TMethod[] getDeclaredMethods() {
+        if (declaredMethods == null) {
+            if (classInfo == null) {
+                declaredMethods = new TMethod[0];
+                return declaredMethods.clone();
+            }
+            if (isPrimitive()) {
+                declaredMethods = new TMethod[0];
+                return declaredMethods.clone();
+            }
+            if (isArray()) {
+                declaredMethods = new TMethod[0];
+                return declaredMethods.clone();
+            }
+            var reflection = classInfo.reflection();
+            if (reflection == null) {
+                declaredMethods = new TMethod[0];
+                return declaredMethods.clone();
+            }
+            var total = reflection.methodCount();
+            var count = 0;
+            for (var i = 0; i < total; ++i) {
+                if (!reflection.method(i).name().getStringObject().equals("<init>")) ++count;
+            }
+            declaredMethods = new TMethod[count];
+            var j = 0;
+            for (var i = 0; i < total; ++i) {
+                var info = reflection.method(i);
+                if (info.name().getStringObject().equals("<init>")) continue;
+                declaredMethods[j++] = new TMethod(this, info);
+            }
+        }
+        return declaredMethods.clone();
     }
 
     public TConstructor<?>[] getConstructors() throws TSecurityException {
@@ -375,33 +438,6 @@ public final class TClass<T> extends TObject implements TGenericDeclaration, TTy
         for (TClass<?> superInterface : iface.getInterfaces()) {
             getFieldsOfInterfaces(superInterface, fields, visited);
         }
-    }
-
-    public TMethod[] getDeclaredMethods() {
-        if (declaredMethods == null) {
-            var reflection = classInfo.reflection();
-            if (reflection == null) {
-                declaredMethods = new TMethod[0];
-            } else {
-                var total = reflection.methodCount();
-                var count = 0;
-                for (var i = 0; i < total; ++i) {
-                    if (!reflection.method(i).name().getStringObject().equals("<init>")) {
-                        ++count;
-                    }
-                }
-                declaredMethods = new TMethod[count];
-                var j = 0;
-                for (var i = 0; i < total; ++i) {
-                    var info = reflection.method(i);
-                    if (info.name().getStringObject().equals("<init>")) {
-                        continue;
-                    }
-                    declaredMethods[j++] = new TMethod(this, info);
-                }
-            }
-        }
-        return declaredMethods.clone();
     }
 
     public TMethod getDeclaredMethod(String name, TClass<?>... parameterTypes) throws TNoSuchMethodException,
@@ -711,15 +747,23 @@ public final class TClass<T> extends TObject implements TGenericDeclaration, TTy
     @PluggableDependency(ClassGenerator.class)
     public TAnnotation[] getDeclaredAnnotations() {
         if (declaredAnnotations == null) {
+            if (classInfo == null) {
+                declaredAnnotations = new TAnnotation[0];
+                return declaredAnnotations.clone();
+            }
             var reflection = classInfo.reflection();
             if (reflection == null) {
                 declaredAnnotations = new TAnnotation[0];
             } else {
-                var count = reflection.annotationCount();
-                declaredAnnotations = new TAnnotation[count];
-                for (var i = 0; i < count; ++i) {
-                    declaredAnnotations[i] = (TAnnotation) AnnotationInfoUtil.createAnnotation(
-                            reflection.annotation(i));
+                try {
+                    var count = reflection.annotationCount();
+                    declaredAnnotations = new TAnnotation[count];
+                    for (var i = 0; i < count; ++i) {
+                        declaredAnnotations[i] = (TAnnotation) AnnotationInfoUtil.createAnnotation(
+                                reflection.annotation(i));
+                    }
+                } catch (Exception e) {
+                    declaredAnnotations = new TAnnotation[0];
                 }
             }
         }
@@ -821,5 +865,13 @@ public final class TClass<T> extends TObject implements TGenericDeclaration, TTy
             classesCache = allClasses.toArray(new TClass<?>[0]);
         }
         return classesCache.clone();
+    }
+
+    public URL getResource(String name) {
+        return null;
+    }
+
+    public java.security.ProtectionDomain getProtectionDomain() {
+        return null;
     }
 }

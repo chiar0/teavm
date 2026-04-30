@@ -3,6 +3,7 @@ package gnu.trove.list.array;
 import java.util.Random;
 
 import gnu.trove.TLongCollection;
+import gnu.trove.iterator.TLongIterator;
 
 /**
  * TeaVM-compatible replacement for Trove's TLongArrayList.
@@ -19,7 +20,25 @@ public class TLongArrayList {
     public TLongArrayList() { this(DEFAULT_CAPACITY); }
     public TLongArrayList(int capacity) { data = new long[Math.max(1, capacity)]; size = 0; }
     public TLongArrayList(long[] values) { data = values.clone(); size = values.length; }
-    public TLongArrayList(TLongCollection c) { this(c.size()); for (gnu.trove.iterator.TLongIterator it = c.iterator(); it.hasNext(); ) add(it.next()); }
+    public TLongArrayList(TLongArrayList other) {
+        data = new long[other.size];
+        System.arraycopy(other.data, 0, data, 0, other.size);
+        size = other.size;
+        no_entry_value = other.no_entry_value;
+    }
+    public TLongArrayList(TLongCollection c) {
+        this(c.size());
+        if (c instanceof TLongArrayList) {
+            TLongArrayList other = (TLongArrayList) c;
+            System.arraycopy(other.data, 0, data, 0, other.size);
+            size = other.size;
+        } else {
+            TLongIterator it = c.iterator();
+            while (it.hasNext()) {
+                add(it.next());
+            }
+        }
+    }
 
     public long getNoEntryValue() { return no_entry_value; }
     public void setNoEntryValue(long v) { no_entry_value = v; }
@@ -107,6 +126,13 @@ public class TLongArrayList {
     }
 
     public boolean addAll(TLongCollection c) {
+        if (c instanceof TLongArrayList) {
+            TLongArrayList other = (TLongArrayList) c;
+            grow(size + other.size);
+            System.arraycopy(other.data, 0, data, size, other.size);
+            size += other.size;
+            return other.size > 0;
+        }
         boolean modified = false;
         for (gnu.trove.iterator.TLongIterator it = c.iterator(); it.hasNext(); ) {
             add(it.next());
@@ -178,5 +204,34 @@ public class TLongArrayList {
         long s = 0L;
         for (int i = 0; i < size; i++) s += data[i];
         return s;
+    }
+
+    public TLongIterator iterator() {
+        return new TLongArrayIterator();
+    }
+
+    class TLongArrayIterator implements TLongIterator {
+        private int _index;
+        private int _lastReturned = -1;
+
+        public boolean hasNext() {
+            return _index < size;
+        }
+
+        public long next() {
+            if (!hasNext()) throw new IndexOutOfBoundsException();
+            _lastReturned = _index;
+            return data[_index++];
+        }
+
+        public void remove() {
+            if (_lastReturned < 0) throw new IllegalStateException();
+            int idx = _lastReturned;
+            _index--;
+            _lastReturned = -1;
+            int moved = size - idx - 1;
+            if (moved > 0) System.arraycopy(data, idx + 1, data, idx, moved);
+            size--;
+        }
     }
 }

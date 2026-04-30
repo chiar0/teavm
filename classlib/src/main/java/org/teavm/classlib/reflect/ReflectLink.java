@@ -30,6 +30,61 @@ public final class ReflectLink {
     private ReflectLink() {}
 
     // ═══════════════════════════════════════════════════════════════════════
+    //  Caches
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /** Cache the winning allocation strategy per class to avoid redundant attempts. */
+    private static final IdentityHashMap<Class<?>, Integer> ALLOC_STRATEGY_CACHE = new IdentityHashMap<>();
+
+    /** Cache resolved no-arg constructors to avoid repeated getDeclaredConstructor scans. */
+    private static final IdentityHashMap<Class<?>, java.lang.reflect.Constructor<?>> CTOR_CACHE =
+        new IdentityHashMap<>();
+
+    /** Cache ClassInfo lookups that required the slow path (linear scan). */
+    private static final IdentityHashMap<Class<?>, org.teavm.runtime.reflect.ClassInfo> CLASSINFO_CACHE =
+        new IdentityHashMap<>();
+
+    /** Sentinel value in CLASSINFO_CACHE for classes whose ClassInfo was not found. */
+    private static final org.teavm.runtime.reflect.ClassInfo CLASSINFO_NULL_SENTINEL =
+        new org.teavm.runtime.reflect.ClassInfo();
+
+    /** Cache classFromDescriptor results to avoid repeated string parsing and Class.forName. */
+    private static final HashMap<String, Class<?>> DESCRIPTOR_CACHE = new HashMap<>();
+    static {
+        DESCRIPTOR_CACHE.put("I", int.class);
+        DESCRIPTOR_CACHE.put("J", long.class);
+        DESCRIPTOR_CACHE.put("D", double.class);
+        DESCRIPTOR_CACHE.put("F", float.class);
+        DESCRIPTOR_CACHE.put("Z", boolean.class);
+        DESCRIPTOR_CACHE.put("B", byte.class);
+        DESCRIPTOR_CACHE.put("S", short.class);
+        DESCRIPTOR_CACHE.put("C", char.class);
+        DESCRIPTOR_CACHE.put("V", void.class);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  Platform-specific raw allocator
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Platform-specific raw object allocator.  On the JS backend,
+     * {@code ClassInfo.newInstance()} fails for classes without a public
+     * no-arg constructor, so the JS glue code should install an allocator
+     * that uses {@code Object.create(cls.prototype)}.  On Wasm GC, this
+     * is not needed because the {@code createInstance} function pointer
+     * always works.
+     */
+    public interface RawAllocator {
+        Object allocate(Class<?> clazz);
+    }
+
+    private static RawAllocator rawAllocator = null;
+
+    public static void setRawAllocator(RawAllocator allocator) {
+        rawAllocator = allocator;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
     //  Diagnostic sink (decoupled from SerDiag)
     // ═══════════════════════════════════════════════════════════════════════
 
@@ -48,12 +103,59 @@ public final class ReflectLink {
      * on the Wasm GC {@code java.lang.Class} struct (populated by
      * {@code TClass.createClass()} during struct construction).
      */
+    private static int classInfoDiagCount = 0;
+    private static final int CLASSINFO_DIAG_MAX = 5;
+
+    /**
+     * Get the ClassInfo for a Class object.
+     * Uses the TClass.classInfo field which is always set by the constructor.
+     * Falls back to linear scan of the ClassInfo registry only if the fast path fails.
+     */
+    public static org.teavm.runtime.reflect.ClassInfo getClassInfoPublic(Class<?> clazz) {
+        return getClassInfo(clazz);
+    }
+
     private static org.teavm.runtime.reflect.ClassInfo getClassInfo(Class<?> clazz) {
-        try {
-            return ((TClass<?>) (Object) clazz).getClassInfo();
-        } catch (Throwable t) {
-            return null;
+        if (clazz == null) return null;
+
+        // Check cache FIRST — avoids fast-path exception on every call for
+        // classes where TClass.classInfo is undefined in JS backend
+        org.teavm.runtime.reflect.ClassInfo cached = CLASSINFO_CACHE.get(clazz);
+        if (cached != null) {
+            return cached == CLASSINFO_NULL_SENTINEL ? null : cached;
         }
+
+        // Fast path: read classInfo via TClass helper (takes Object to avoid
+        // generating (TClass) casts that cause WASM GC validation errors).
+        try {
+            org.teavm.runtime.reflect.ClassInfo ci = TClass.getClassInfoOfClass(clazz);
+            if (ci != null) {
+                try {
+                    var ignored = ci.name();
+                    return ci;
+                } catch (Throwable t) {
+                    // ci is not a valid ClassInfo — fall through to slow path
+                }
+            }
+        } catch (Throwable ignored) {}
+
+        // Slow fallback: linear scan of the ClassInfo linked list
+        try {
+            String name = clazz.getName();
+            org.teavm.runtime.reflect.ClassInfo.rewind();
+            while (org.teavm.runtime.reflect.ClassInfo.hasNext()) {
+                org.teavm.runtime.reflect.ClassInfo candidate = org.teavm.runtime.reflect.ClassInfo.next();
+                var candidateName = candidate.name();
+                if (candidateName != null && name.equals(candidateName.getStringObject())) {
+                    CLASSINFO_CACHE.put(clazz, candidate);
+                    return candidate;
+                }
+            }
+        } catch (Throwable ignored) {}
+
+        // Cache the negative result to avoid repeated linear scans
+        CLASSINFO_CACHE.put(clazz, CLASSINFO_NULL_SENTINEL);
+        return null;
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -98,60 +200,165 @@ public final class ReflectLink {
      * </ol>
      */
     public static AllocResult allocateWithReason(Class<?> clazz) {
-        String[] errs = new String[3];
+        // Skip singleton classes that must not be re-instantiated.
+        // grammar.Grammar uses a static singleton field; constructing a new
+        // instance via reflection runs the constructor body which may trigger
+        // generate() and corrupt the singleton's symbol tables.
+        if (isSingletonClass(clazz)) {
+            return new AllocResult(null, "singleton class: " + clazz.getName(), null);
+        }
+
+        // Check strategy cache — skip directly to the winning strategy
+        Integer cachedStrategy = ALLOC_STRATEGY_CACHE.get(clazz);
+        if (cachedStrategy != null) {
+            AllocResult r = tryStrategy(clazz, cachedStrategy);
+            if (r.obj != null) return r;
+            // Cache miss (strategy that worked before now fails) — fall through to full scan
+        }
+
+        String[] errs = new String[4];
 
         // Strategy 1: Declared no-arg constructor via reflection.
         try {
-            java.lang.reflect.Constructor<?> ctor = clazz.getDeclaredConstructor();
-            ctor.setAccessible(true);
+            java.lang.reflect.Constructor<?> ctor = CTOR_CACHE.get(clazz);
+            if (ctor == null) {
+                ctor = clazz.getDeclaredConstructor();
+                ctor.setAccessible(true);
+                CTOR_CACHE.put(clazz, ctor);
+            }
             Object obj = ctor.newInstance();
-            if (obj != null) return new AllocResult(obj, null, errs);
+            if (obj != null) {
+                ALLOC_STRATEGY_CACHE.put(clazz, 1);
+                return new AllocResult(obj, null, errs);
+            }
             errs[0] = "Constructor.newInstance() returned null";
         } catch (Throwable t) {
             errs[0] = "declared-ctor threw " + t.getClass().getName()
                 + ": " + t.getMessage();
         }
 
-        // Strategy 2: ClassInfo.newInstance — runs no-arg constructor + field init.
+        // Strategy 2: ClassInfo.rawNewInstance — raw allocation without constructor.
+        boolean canRawAlloc = true;
         try {
-            org.teavm.runtime.reflect.ClassInfo ci = getClassInfo(clazz);
-            if (ci != null) {
-                Object obj = ci.newInstance();
-                if (obj != null) return new AllocResult(obj, null, errs);
-                errs[1] = "ClassInfo.newInstance() returned null";
-            } else {
-                errs[1] = "no ClassInfo in runtime registry";
+            String cn = clazz.getName();
+            if ("java.lang.String".equals(cn)
+                    || "java.lang.Integer".equals(cn)
+                    || "java.lang.Long".equals(cn)
+                    || "java.lang.Double".equals(cn)
+                    || "java.lang.Float".equals(cn)
+                    || "java.lang.Boolean".equals(cn)
+                    || "java.lang.Byte".equals(cn)
+                    || "java.lang.Short".equals(cn)
+                    || "java.lang.Character".equals(cn)) {
+                canRawAlloc = false;
             }
-        } catch (Throwable t) {
-            errs[1] = "ClassInfo.newInstance threw " + t.getClass().getName()
-                + ": " + t.getMessage();
+        } catch (Throwable ignored) {}
+        if (canRawAlloc) {
+            try {
+                org.teavm.runtime.reflect.ClassInfo ci = getClassInfo(clazz);
+                if (ci != null) {
+                    Object obj = ci.rawNewInstance();
+                    if (obj != null) {
+                        ALLOC_STRATEGY_CACHE.put(clazz, 2);
+                        return new AllocResult(obj, null, errs);
+                    }
+                    errs[1] = "rawNewInstance() returned null";
+                } else {
+                    errs[1] = "no ClassInfo for raw alloc";
+                }
+            } catch (Throwable t) {
+                errs[1] = "rawNewInstance threw " + t.getClass().getName()
+                    + ": " + t.getMessage();
+            }
+        } else {
+            errs[1] = "skipped (boxed/intrinsic type)";
         }
 
-        // Strategy 3: ClassInfo.newInstance + initializeNewInstance, no clinit.
+        // Strategy 3: ClassInfo.newInstance — runs no-arg constructor + field init.
         try {
             org.teavm.runtime.reflect.ClassInfo ci = getClassInfo(clazz);
             if (ci != null) {
                 Object obj = ci.newInstance();
                 if (obj != null) {
-                    ci.initializeNewInstance(obj);
+                    ALLOC_STRATEGY_CACHE.put(clazz, 3);
                     return new AllocResult(obj, null, errs);
                 }
-                errs[2] = "newInstance (no-clinit) returned null";
+                errs[2] = "ClassInfo.newInstance() returned null";
             } else {
-                errs[2] = "no ClassInfo for no-clinit path";
+                errs[2] = "no ClassInfo in runtime registry";
             }
         } catch (Throwable t) {
-            errs[2] = "no-clinit alloc threw " + t.getClass().getName()
+            errs[2] = "ClassInfo.newInstance threw " + t.getClass().getName()
                 + ": " + t.getMessage();
+        }
+
+        // Strategy 4: Platform-specific raw allocator (external hook).
+        if (rawAllocator != null) {
+            try {
+                Object obj = rawAllocator.allocate(clazz);
+                if (obj != null) {
+                    ALLOC_STRATEGY_CACHE.put(clazz, 4);
+                    return new AllocResult(obj, null, errs);
+                }
+                errs[3] = "rawAllocator returned null";
+            } catch (Throwable t) {
+                errs[3] = "rawAllocator threw " + t.getClass().getName()
+                    + ": " + t.getMessage();
+            }
+        } else {
+            errs[3] = "no rawAllocator installed";
         }
 
         // Compose a single-line reason so log grepping stays simple.
         StringBuilder sb = new StringBuilder();
-        sb.append("all 3 allocation strategies failed");
+        sb.append("all 4 allocation strategies failed");
         for (int i = 0; i < errs.length; i++) {
             sb.append("; s").append(i + 1).append("=").append(errs[i]);
         }
         return new AllocResult(null, sb.toString(), errs);
+    }
+
+    /** Execute a single cached strategy. Returns AllocResult with null obj on failure. */
+    private static AllocResult tryStrategy(Class<?> clazz, int strategy) {
+        try {
+            switch (strategy) {
+                case 1: {
+                    java.lang.reflect.Constructor<?> ctor = CTOR_CACHE.get(clazz);
+                    if (ctor == null) {
+                        ctor = clazz.getDeclaredConstructor();
+                        ctor.setAccessible(true);
+                        CTOR_CACHE.put(clazz, ctor);
+                    }
+                    Object obj = ctor.newInstance();
+                    if (obj != null) return new AllocResult(obj, null, null);
+                    break;
+                }
+                case 2: {
+                    org.teavm.runtime.reflect.ClassInfo ci = getClassInfo(clazz);
+                    if (ci != null) {
+                        Object obj = ci.rawNewInstance();
+                        if (obj != null) return new AllocResult(obj, null, null);
+                    }
+                    break;
+                }
+                case 3: {
+                    org.teavm.runtime.reflect.ClassInfo ci = getClassInfo(clazz);
+                    if (ci != null) {
+                        Object obj = ci.newInstance();
+                        if (obj != null) return new AllocResult(obj, null, null);
+                    }
+                    break;
+                }
+                case 4: {
+                    if (rawAllocator != null) {
+                        Object obj = rawAllocator.allocate(clazz);
+                        if (obj != null) return new AllocResult(obj, null, null);
+                    }
+                    break;
+                }
+            }
+        } catch (Throwable ignored) {}
+        return new AllocResult(null, "cached strategy " + strategy + " failed", null);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -390,7 +597,7 @@ public final class ReflectLink {
         }
         boolean isFinal = Modifier.isFinal(f.getModifiers());
         if (isFinal && diag != null && diag.isDebug()) {
-            diag.record("setFieldFail", clsName, fieldName, "final", null);
+            diag.record("writingFinalField", clsName, fieldName, "final", null);
         }
 
         // Targeted diagnostics for ChunkSet fields
@@ -439,14 +646,9 @@ public final class ReflectLink {
             try {
                 f.set(obj, converted);
             } catch (ClassCastException e) {
-                Object coerced = coerce(ft, converted);
-                try {
-                    f.set(obj, coerced);
-                } catch (ClassCastException e2) {
-                    if (diag != null) diag.record("setFieldFail", obj.getClass().getName(),
-                        fieldName, ft.getName(),
-                        converted != null ? converted.getClass().getName() : "null");
-                }
+                if (diag != null) diag.record("setFieldFail", obj.getClass().getName(),
+                    fieldName, ft.getName(),
+                    converted != null ? converted.getClass().getName() : "null");
             }
 
         } catch (Throwable t) {
@@ -489,7 +691,7 @@ public final class ReflectLink {
         }
         boolean isFinal = Modifier.isFinal(f.getModifiers());
         if (isFinal && diag != null && diag.isDebug()) {
-            diag.record("setFieldFail", clsName, fieldName, "final", null);
+            diag.record("writingFinalField", clsName, fieldName, "final", null);
         }
 
         Object converted = null;
@@ -509,14 +711,9 @@ public final class ReflectLink {
             try {
                 f.set(obj, converted);
             } catch (ClassCastException e) {
-                Object coerced = coerce(knownType, converted);
-                try {
-                    f.set(obj, coerced);
-                } catch (ClassCastException e2) {
-                    if (diag != null) diag.record("setFieldFail", clsName,
-                        fieldName, knownType.getName(),
-                        converted != null ? converted.getClass().getName() : "null");
-                }
+                if (diag != null) diag.record("setFieldFail", clsName,
+                    fieldName, knownType.getName(),
+                    converted != null ? converted.getClass().getName() : "null");
             }
 
         } catch (Throwable t) {
@@ -534,18 +731,20 @@ public final class ReflectLink {
      */
     public static Class<?> classFromDescriptor(String descriptor) {
         if (descriptor == null || descriptor.isEmpty()) return null;
-        switch (descriptor) {
-            case "I": return int.class;
-            case "J": return long.class;
-            case "D": return double.class;
-            case "F": return float.class;
-            case "Z": return boolean.class;
-            case "B": return byte.class;
-            case "S": return short.class;
-            case "C": return char.class;
-            case "V": return void.class;
-            default: break;
-        }
+
+        // Check cache first (pre-populated with all primitives)
+        Class<?> cached = DESCRIPTOR_CACHE.get(descriptor);
+        if (cached != null) return cached;
+
+        // Also check for previously-resolved-to-null descriptors
+        if (DESCRIPTOR_CACHE.containsKey(descriptor)) return null;
+
+        Class<?> result = resolveDescriptor(descriptor);
+        DESCRIPTOR_CACHE.put(descriptor, result);
+        return result;
+    }
+
+    private static Class<?> resolveDescriptor(String descriptor) {
         if (descriptor.startsWith("[")) {
             String component = descriptor.substring(1);
             Class<?> componentType = classFromDescriptor(component);
@@ -654,13 +853,34 @@ public final class ReflectLink {
                 int[] data = (int[]) words;
                 int n = data.length;
                 while (n > 0 && data[n - 1] == 0) n--;
-                chunkSetWordsInUseField.set(obj, Integer.valueOf(n));
+                // int[] stores long words as pairs of ints; wordsInUse counts long-sized slots
+                chunkSetWordsInUseField.set(obj, Integer.valueOf((n + 1) >>> 1));
             }
         } catch (Throwable t) {
             if (diag != null) diag.record("setFieldFail",
                 obj.getClass().getName(), "wordsInUse",
                 "long[]", "repair-threw: " + t.getClass().getName() + ": " + t.getMessage());
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  Singleton class guard — prevent re-instantiation via reflection
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Returns {@code true} for classes that use a static singleton pattern
+     * and must NOT be re-instantiated during deserialization.  Constructing
+     * a new instance via reflection runs the constructor, which may reset
+     * static state or trigger expensive initialisation that corrupts the
+     * singleton.
+     * <p>
+     * The deserializer will fall back to DRAIN mode for these classes,
+     * consuming their field data without creating a live object.
+     */
+    private static boolean isSingletonClass(Class<?> clazz) {
+        if (clazz == null) return false;
+        String name = clazz.getName();
+        return "grammar.Grammar".equals(name);
     }
 
     private static Object tryConvertListToArray(Object converted, Class<?> arrayComponentType)

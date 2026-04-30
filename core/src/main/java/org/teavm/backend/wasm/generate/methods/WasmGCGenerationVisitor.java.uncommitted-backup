@@ -63,10 +63,13 @@ import org.teavm.backend.wasm.model.expression.WasmCastBranch;
 import org.teavm.backend.wasm.model.expression.WasmCastCondition;
 import org.teavm.backend.wasm.model.expression.WasmDrop;
 import org.teavm.backend.wasm.model.expression.WasmExpression;
+import org.teavm.backend.wasm.model.expression.WasmFloat32Constant;
+import org.teavm.backend.wasm.model.expression.WasmFloat64Constant;
 import org.teavm.backend.wasm.model.expression.WasmGetGlobal;
 import org.teavm.backend.wasm.model.expression.WasmGetLocal;
 import org.teavm.backend.wasm.model.expression.WasmInt32Constant;
 import org.teavm.backend.wasm.model.expression.WasmInt32Subtype;
+import org.teavm.backend.wasm.model.expression.WasmInt64Constant;
 import org.teavm.backend.wasm.model.expression.WasmInt64Subtype;
 import org.teavm.backend.wasm.model.expression.WasmIntBinary;
 import org.teavm.backend.wasm.model.expression.WasmIntBinaryOperation;
@@ -230,18 +233,21 @@ public class WasmGCGenerationVisitor extends BaseWasmGenerationVisitor {
         accept(value, elementType);
         var wasmValue = result;
         if (needsArrayStoreCheck(elementType)) {
-            var elementRefType = (WasmType.Reference) elementType;
-            var block = new WasmBlock(false);
-            var checkBlock = new WasmBlock(false);
-            var test = new WasmTest(wasmValue, elementRefType);
-            checkBlock.getBody().add(new WasmBranch(test, checkBlock));
-            var callAse = new WasmCall(context.aseMethod());
-            var throwExpr = new WasmThrow(context.getExceptionTag());
-            throwExpr.getArguments().add(callAse);
-            checkBlock.getBody().add(throwExpr);
-            block.getBody().add(checkBlock);
-            block.getBody().add(new WasmArraySet(arrayType, array, index, wasmValue));
-            return block;
+            var aseFn = context.aseMethod();
+            if (aseFn != null) {
+                var elementRefType = (WasmType.Reference) elementType;
+                var block = new WasmBlock(false);
+                var checkBlock = new WasmBlock(false);
+                var test = new WasmTest(wasmValue, elementRefType);
+                checkBlock.getBody().add(new WasmBranch(test, checkBlock));
+                var callAse = new WasmCall(aseFn);
+                var throwExpr = new WasmThrow(context.getExceptionTag());
+                throwExpr.getArguments().add(callAse);
+                checkBlock.getBody().add(throwExpr);
+                block.getBody().add(checkBlock);
+                block.getBody().add(new WasmArraySet(arrayType, array, index, wasmValue));
+                return block;
+            }
         }
         return new WasmArraySet(arrayType, array, index, wasmValue);
     }
@@ -280,6 +286,8 @@ public class WasmGCGenerationVisitor extends BaseWasmGenerationVisitor {
             accept(value, struct.getFields().get(fieldIndex).getUnpackedType());
             return new WasmStructSet(struct, target, fieldIndex, result);
         } else {
+            context.diagnostics().error(null, "Field ''{0}'' not mapped in WASM struct — store silently dropped",
+                    field);
             accept(value);
             return result;
         }
@@ -364,6 +372,9 @@ public class WasmGCGenerationVisitor extends BaseWasmGenerationVisitor {
 
     @Override
     protected WasmExpression nullLiteral(WasmType type) {
+        if (type instanceof WasmType.CompositeReference) {
+            return new WasmNullConstant(((WasmType.CompositeReference) type).composite.getReference());
+        }
         return new WasmNullConstant((WasmType.Reference) type);
     }
 
@@ -382,14 +393,19 @@ public class WasmGCGenerationVisitor extends BaseWasmGenerationVisitor {
             return result;
         }
         result.acceptVisitor(typeInference);
-        block.setType(typeInference.getSingleResult().asBlock());
-        var check = new WasmNullBranch(WasmNullCondition.NOT_NULL, result, block);
-        block.getBody().add(check);
+        var inferredType = typeInference.getSingleResult();
+        if (inferredType instanceof WasmType.CompositeReference
+                && !((WasmType.CompositeReference) inferredType).isNullable()) {
+            inferredType = ((WasmType.CompositeReference) inferredType).composite.getReference();
+        }
+        block.setType(inferredType.asBlock());
 
-        var callSiteId = generateCallSiteId(location);
-        callSiteId.generateRegister(block.getBody(), location);
-        generateThrowNPE(location, block.getBody());
-        callSiteId.generateThrow(block.getBody(), location);
+        var innerBlock = new WasmBlock(false);
+        var check = new WasmNullBranch(WasmNullCondition.NOT_NULL, result, block);
+        innerBlock.getBody().add(check);
+
+        generateThrowNPE(location, innerBlock.getBody());
+        block.getBody().add(innerBlock);
 
         return block;
     }
@@ -616,14 +632,10 @@ public class WasmGCGenerationVisitor extends BaseWasmGenerationVisitor {
                 canInsertCast = false;
             } else if (!sourceStruct.isSupertypeOf(targetStruct)) {
                 var block = new WasmBlock(false);
-                var nullableTarget = targetType instanceof WasmType.CompositeReference
-                        && !targetType.isNullable()
-                        ? ((WasmType.CompositeReference) targetType).composite.getReference()
-                        : targetType;
-                block.setType(nullableTarget.asBlock());
+                block.setType(targetType.asBlock());
                 block.setLocation(expr.getLocation());
                 block.getBody().add(new WasmDrop(result));
-                block.getBody().add(new WasmNullConstant(nullableTarget));
+                block.getBody().add(new WasmNullConstant(targetType));
                 result = block;
                 return;
             }
@@ -645,7 +657,8 @@ public class WasmGCGenerationVisitor extends BaseWasmGenerationVisitor {
             } else {
                 block.setType(sourceType.asBlock());
                 var valueToCheck = exprCache.create(result, sourceType, expr.getLocation(), block.getBody());
-                block.getBody().add(new WasmNullConstant(sourceType));
+                block.getBody().add(new WasmNullConstant(sourceType instanceof WasmType.CompositeReference
+                        ? ((WasmType.CompositeReference) sourceType).composite.getReference() : sourceType));
                 var nonNullValue = new WasmNullBranch(WasmNullCondition.NULL, valueToCheck.expr(), block);
                 block.getBody().add(new WasmDrop(nonNullValue));
                 block.getBody().add(new WasmDrop(new WasmPop(sourceType)));
@@ -665,17 +678,12 @@ public class WasmGCGenerationVisitor extends BaseWasmGenerationVisitor {
             generateThrowCCE(expr.getLocation(), block.getBody());
         } else if (canInsertCast) {
             var block = new WasmBlock(false);
-            // Use nullable type for the block since the fallthrough returns null
-            var nullableTarget = targetType instanceof WasmType.CompositeReference
-                    && !targetType.isNullable()
-                    ? ((WasmType.CompositeReference) targetType).composite.getReference()
-                    : targetType;
-            block.setType(nullableTarget.asBlock());
+            block.setType(targetType.asBlock());
             block.setLocation(expr.getLocation());
             block.getBody().add(new WasmCastBranch(WasmCastCondition.SUCCESS, result, sourceType,
-                    nullableTarget, block));
+                    targetType, block));
             block.getBody().add(new WasmDrop(new WasmPop(sourceType)));
-            block.getBody().add(new WasmNullConstant(nullableTarget));
+            block.getBody().add(new WasmNullConstant(targetType));
             result = block;
         }
     }
@@ -881,6 +889,10 @@ public class WasmGCGenerationVisitor extends BaseWasmGenerationVisitor {
             acceptWithType(expr.getQualified(), ValueType.object(expr.getField().getClassName()));
             var target = result;
 
+            if (target instanceof WasmGetLocal) {
+                target = qualifierNullCheck(target, expr.getLocation());
+            }
+
             var classInfo = context.classInfoProvider().getClassInfo(expr.getField().getClassName());
             if (classInfo.isHeapStructure()) {
                 var offset = context.classInfoProvider().getHeapFieldOffset(expr.getField());
@@ -894,6 +906,31 @@ public class WasmGCGenerationVisitor extends BaseWasmGenerationVisitor {
         }
     }
 
+    private WasmExpression qualifierNullCheck(WasmExpression qualifier, TextLocation location) {
+        qualifier.acceptVisitor(typeInference);
+        var inferredType = typeInference.getSingleResult();
+        if (!(inferredType instanceof WasmType.Reference)) {
+            return qualifier;
+        }
+        if (inferredType instanceof WasmType.CompositeReference
+                && !((WasmType.CompositeReference) inferredType).isNullable()) {
+            inferredType = ((WasmType.CompositeReference) inferredType).composite.getReference();
+        }
+
+        var block = new WasmBlock(false);
+        block.setType(((WasmType.Reference) inferredType).asBlock());
+        block.setLocation(location);
+
+        var innerBlock = new WasmBlock(false);
+        var check = new WasmNullBranch(WasmNullCondition.NOT_NULL, qualifier, block);
+        innerBlock.getBody().add(check);
+
+        generateThrowNPE(location, innerBlock.getBody());
+        block.getBody().add(innerBlock);
+
+        return block;
+    }
+
     private WasmExpression getNormalField(QualificationExpr expr, WasmExpression target) {
         target.acceptVisitor(typeInference);
         var type = (WasmType.CompositeReference) typeInference.getSingleResult();
@@ -903,6 +940,8 @@ public class WasmGCGenerationVisitor extends BaseWasmGenerationVisitor {
         var struct = (WasmStructure) type.composite;
         var fieldIndex = context.classInfoProvider().getFieldIndex(expr.getField());
         if (fieldIndex < 0) {
+            context.diagnostics().warning(null, "Field ''{0}'' not mapped in WASM struct — read will trap",
+                    expr.getField());
             return new WasmUnreachable();
         }
         var structGet = new WasmStructGet(struct, target, fieldIndex);
@@ -1172,56 +1211,4 @@ public class WasmGCGenerationVisitor extends BaseWasmGenerationVisitor {
             return asyncSplitMethods.contains(method);
         }
     };
-
-    @Override
-    public void visit(ConditionalExpr expr) {
-        var branchType = inferCondBranchType(expr);
-        if (branchType != null) {
-            accept(expr.getConsequent(), branchType);
-            var thenResult = result;
-            accept(expr.getAlternative(), branchType);
-            var elseResult = result;
-
-            var block = new WasmBlock(false);
-            block.setLocation(expr.getLocation());
-            block.setType(branchType.asBlock());
-
-            var thenBlock = new WasmBlock(false);
-            thenBlock.setType(branchType.asBlock());
-            thenBlock.getBody().add(thenResult);
-            var thenBreak = new WasmBreak(thenBlock);
-            thenBreak.setResult(thenResult);
-            thenBlock.getBody().add(thenBreak);
-            block.getBody().add(thenBlock);
-
-            var elseBlock = new WasmBlock(false);
-            elseBlock.setType(branchType.asBlock());
-            elseBlock.getBody().add(elseResult);
-            var elseBreak = new WasmBreak(elseBlock);
-            elseBreak.setResult(elseResult);
-            elseBlock.getBody().add(elseBreak);
-            block.getBody().add(elseBlock);
-
-            result = block;
-        } else {
-            super.visit(expr);
-        }
-    }
-
-    private WasmType.Reference inferCondBranchType(ConditionalExpr expr) {
-        if (expr.getVariableIndex() >= 0) {
-            var javaType = types.typeOf(expr.getVariableIndex());
-            if (javaType != null) {
-                return (WasmType.Reference) mapType(javaType.valueType);
-            }
-        }
-        if (expr.getConsequent().getVariableIndex() >= 0
-                && expr.getConsequent().getVariableIndex() == expr.getAlternative().getVariableIndex()) {
-            var javaType = types.typeOf(expr.getConsequent().getVariableIndex());
-            if (javaType != null) {
-                return (WasmType.Reference) mapType(javaType.valueType);
-            }
-        }
-        return null;
-    }
 }

@@ -365,7 +365,7 @@ public class WasmGCClassGenerator implements WasmGCClassInfoProvider, WasmGCInit
                             var structName = names.topLevel(names.suggestForType(type));
                             classInfo.structure = new WasmStructure(structName,
                                     fields -> fillFields(finalClassInfo, fields, type));
-                            // classInfo.structure.setNominal(true); // disabled: testing if nominal types cause type mismatches
+                            classInfo.structure.setNominal(true);
                             module.types.add(classInfo.structure);
                             nonInitializedStructures.add(classInfo.structure);
                         }
@@ -1607,7 +1607,7 @@ public class WasmGCClassGenerator implements WasmGCClassInfoProvider, WasmGCInit
             }
             var wasmArrayName = names.topLevel(names.suggestForType(classInfo.getValueType()) + "$Data");
             wasmArray = new WasmArray(wasmArrayName, wasmElementType);
-            // wasmArray.setNominal(true); // disabled: testing if nominal arrays cause type mismatches
+            wasmArray.setNominal(true);
             module.types.add(wasmArray);
         } else {
             wasmArray = getObjectArrayType();
@@ -1625,7 +1625,7 @@ public class WasmGCClassGenerator implements WasmGCClassInfoProvider, WasmGCInit
             var wasmArrayName = names.topLevel(names.suggestForType(ValueType.arrayOf(
                     ValueType.object("java.lang.Object"))) + "$Data");
             wasmArray = new WasmArray(wasmArrayName, wasmElementType);
-            // wasmArray.setNominal(true); // disabled: testing if nominal arrays cause type mismatches
+            wasmArray.setNominal(true);
             module.types.add(wasmArray);
             objectArrayType = wasmArray;
         }
