@@ -118,44 +118,49 @@ public final class ReflectLink {
     private static org.teavm.runtime.reflect.ClassInfo getClassInfo(Class<?> clazz) {
         if (clazz == null) return null;
 
-        // Check cache FIRST — avoids fast-path exception on every call for
-        // classes where TClass.classInfo is undefined in JS backend
+        // Single result variable to avoid WASM GC branch type divergence
+        org.teavm.runtime.reflect.ClassInfo result = null;
+
         org.teavm.runtime.reflect.ClassInfo cached = CLASSINFO_CACHE.get(clazz);
         if (cached != null) {
-            return cached == CLASSINFO_NULL_SENTINEL ? null : cached;
+            if (cached != CLASSINFO_NULL_SENTINEL) {
+                result = cached;
+            }
+            return result;
         }
 
-        // Fast path: read classInfo via TClass helper (takes Object to avoid
-        // generating (TClass) casts that cause WASM GC validation errors).
         try {
             org.teavm.runtime.reflect.ClassInfo ci = TClass.getClassInfoOfClass(clazz);
             if (ci != null) {
                 try {
                     var ignored = ci.name();
-                    return ci;
+                    result = ci;
                 } catch (Throwable t) {
-                    // ci is not a valid ClassInfo — fall through to slow path
+                    // not a valid ClassInfo — fall through
                 }
             }
         } catch (Throwable ignored) {}
 
-        // Slow fallback: linear scan of the ClassInfo linked list
-        try {
-            String name = clazz.getName();
-            org.teavm.runtime.reflect.ClassInfo.rewind();
-            while (org.teavm.runtime.reflect.ClassInfo.hasNext()) {
-                org.teavm.runtime.reflect.ClassInfo candidate = org.teavm.runtime.reflect.ClassInfo.next();
-                var candidateName = candidate.name();
-                if (candidateName != null && name.equals(candidateName.getStringObject())) {
-                    CLASSINFO_CACHE.put(clazz, candidate);
-                    return candidate;
+        if (result == null) {
+            try {
+                String name = clazz.getName();
+                org.teavm.runtime.reflect.ClassInfo.rewind();
+                while (org.teavm.runtime.reflect.ClassInfo.hasNext()) {
+                    org.teavm.runtime.reflect.ClassInfo candidate = org.teavm.runtime.reflect.ClassInfo.next();
+                    var candidateName = candidate.name();
+                    if (candidateName != null && name.equals(candidateName.getStringObject())) {
+                        CLASSINFO_CACHE.put(clazz, candidate);
+                        result = candidate;
+                        break;
+                    }
                 }
-            }
-        } catch (Throwable ignored) {}
+            } catch (Throwable ignored) {}
+        }
 
-        // Cache the negative result to avoid repeated linear scans
-        CLASSINFO_CACHE.put(clazz, CLASSINFO_NULL_SENTINEL);
-        return null;
+        if (result == null) {
+            CLASSINFO_CACHE.put(clazz, CLASSINFO_NULL_SENTINEL);
+        }
+        return result;
     }
 
     // ═══════════════════════════════════════════════════════════════════════
