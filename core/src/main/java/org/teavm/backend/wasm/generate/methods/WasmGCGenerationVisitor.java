@@ -56,7 +56,6 @@ import org.teavm.backend.wasm.model.expression.WasmArrayLength;
 import org.teavm.backend.wasm.model.expression.WasmArraySet;
 import org.teavm.backend.wasm.model.expression.WasmBlock;
 import org.teavm.backend.wasm.model.expression.WasmBranch;
-import org.teavm.backend.wasm.model.expression.WasmBreak;
 import org.teavm.backend.wasm.model.expression.WasmCall;
 import org.teavm.backend.wasm.model.expression.WasmCallReference;
 import org.teavm.backend.wasm.model.expression.WasmCast;
@@ -1174,55 +1173,4 @@ public class WasmGCGenerationVisitor extends BaseWasmGenerationVisitor {
         }
     };
 
-    @Override
-    public void visit(ConditionalExpr expr) {
-        var branchType = inferCondBranchType(expr);
-        if (branchType != null) {
-            accept(expr.getConsequent(), branchType);
-            var thenResult = result;
-            accept(expr.getAlternative(), branchType);
-            var elseResult = result;
-
-            var block = new WasmBlock(false);
-            block.setLocation(expr.getLocation());
-            block.setType(branchType.asBlock());
-
-            var thenBlock = new WasmBlock(false);
-            thenBlock.setType(branchType.asBlock());
-            thenBlock.getBody().add(thenResult);
-            var thenBreak = new WasmBreak(thenBlock);
-            thenBreak.setResult(thenResult);
-            thenBlock.getBody().add(thenBreak);
-            block.getBody().add(thenBlock);
-
-            var elseBlock = new WasmBlock(false);
-            elseBlock.setType(branchType.asBlock());
-            elseBlock.getBody().add(elseResult);
-            var elseBreak = new WasmBreak(elseBlock);
-            elseBreak.setResult(elseResult);
-            elseBlock.getBody().add(elseBreak);
-            block.getBody().add(elseBlock);
-
-            result = block;
-        } else {
-            super.visit(expr);
-        }
-    }
-
-    private WasmType.Reference inferCondBranchType(ConditionalExpr expr) {
-        if (expr.getVariableIndex() >= 0) {
-            var javaType = types.typeOf(expr.getVariableIndex());
-            if (javaType != null) {
-                return (WasmType.Reference) mapType(javaType.valueType);
-            }
-        }
-        if (expr.getConsequent().getVariableIndex() >= 0
-                && expr.getConsequent().getVariableIndex() == expr.getAlternative().getVariableIndex()) {
-            var javaType = types.typeOf(expr.getConsequent().getVariableIndex());
-            if (javaType != null) {
-                return (WasmType.Reference) mapType(javaType.valueType);
-            }
-        }
-        return null;
-    }
 }
