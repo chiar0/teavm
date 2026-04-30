@@ -118,19 +118,15 @@ public final class ReflectLink {
     private static org.teavm.runtime.reflect.ClassInfo getClassInfo(Class<?> clazz) {
         if (clazz == null) return null;
 
-        // Typed cache lookup — avoid IdentityHashMap.get() which returns Object
-        // and causes WASM GC branch type divergence (Object type 36 vs ClassInfo type 26)
-        org.teavm.runtime.reflect.ClassInfo result = getClassInfoFromCache(clazz);
-        if (result != null || isCachedNegative(clazz)) {
-            return result;
-        }
+        // Skip cache entirely to avoid WASM GC type divergence from erased
+        // IdentityHashMap.get() (returns Object=type36 vs ClassInfo=type26).
+        // Direct lookup only — cache is only beneficial in JS backend.
 
         try {
             org.teavm.runtime.reflect.ClassInfo ci = TClass.getClassInfoOfClass(clazz);
             if (ci != null) {
                 try {
                     var ignored = ci.name();
-                    CLASSINFO_CACHE.put(clazz, ci);
                     return ci;
                 } catch (Throwable t) {
                     // not a valid ClassInfo — fall through
@@ -145,38 +141,12 @@ public final class ReflectLink {
                 org.teavm.runtime.reflect.ClassInfo candidate = org.teavm.runtime.reflect.ClassInfo.next();
                 var candidateName = candidate.name();
                 if (candidateName != null && name.equals(candidateName.getStringObject())) {
-                    CLASSINFO_CACHE.put(clazz, candidate);
                     return candidate;
                 }
             }
         } catch (Throwable ignored) {}
 
-        CLASSINFO_CACHE.put(clazz, CLASSINFO_NULL_SENTINEL);
         return null;
-    }
-
-    /** Typed cache read — iterates entries to avoid erased map.get() return type. */
-    private static org.teavm.runtime.reflect.ClassInfo getClassInfoFromCache(Class<?> clazz) {
-        try {
-            java.util.Iterator<java.util.Map.Entry<Class<?>, org.teavm.runtime.reflect.ClassInfo>> it =
-                CLASSINFO_CACHE.entrySet().iterator();
-            while (it.hasNext()) {
-                java.util.Map.Entry<Class<?>, org.teavm.runtime.reflect.ClassInfo> entry = it.next();
-                if (entry.getKey() == clazz) {
-                    org.teavm.runtime.reflect.ClassInfo val = entry.getValue();
-                    return val == CLASSINFO_NULL_SENTINEL ? null : val;
-                }
-            }
-        } catch (Throwable ignored) {}
-        return null;
-    }
-
-    private static boolean isCachedNegative(Class<?> clazz) {
-        try {
-            return CLASSINFO_CACHE.containsKey(clazz);
-        } catch (Throwable ignored) {
-            return false;
-        }
     }
 
     // ═══════════════════════════════════════════════════════════════════════
