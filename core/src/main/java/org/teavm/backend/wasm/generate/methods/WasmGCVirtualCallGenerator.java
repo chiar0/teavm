@@ -50,6 +50,9 @@ public class WasmGCVirtualCallGenerator {
             List<WasmExpression> arguments) {
         var vtable = virtualTables.lookup(method.getClassName());
         if (vtable == null) {
+            if (method.getName().equals("clone") && method.parameterCount() == 0) {
+                return generateCloneViaClassInfo(instance);
+            }
             return new WasmUnreachable();
         }
 
@@ -79,16 +82,33 @@ public class WasmGCVirtualCallGenerator {
         var instanceStruct = (WasmStructure) instanceType.composite;
         if (!expectedInstanceClassStruct.isSupertypeOf(instanceStruct)) {
             var check = new WasmBlock(false);
-            check.setType(expectedInstanceClassStruct.getNonNullReference().asBlock());
+            var targetType = expectedInstanceClassStruct.getNonNullReference();
+            check.setType(targetType.asBlock());
             check.getBody().add(new WasmCastBranch(WasmCastCondition.SUCCESS, instanceRef, instanceType,
-                    expectedInstanceClassStruct.getNonNullReference(), check));
+                    targetType, check));
             check.getBody().add(new WasmDrop(new WasmPop(instanceType)));
-            check.getBody().add(new WasmNullConstant(expectedInstanceClassStruct.getNonNullReference()));
+            check.getBody().add(new WasmUnreachable());
             instanceRef = check;
         }
 
         invoke.getArguments().add(instanceRef);
         invoke.getArguments().addAll(arguments);
         return invoke;
+    }
+
+    private WasmExpression generateCloneViaClassInfo(WasmLocal instance) {
+        var objectInfo = classInfoProvider.getClassInfo("java.lang.Object");
+        var objectStruct = objectInfo.getStructure();
+        var classInfoStruct = classInfoProvider.reflectionTypes().classInfo();
+
+        var vt = new WasmStructGet(objectStruct, new WasmGetLocal(instance),
+                WasmGCClassInfoProvider.VT_FIELD_OFFSET);
+        var cls = new WasmStructGet(objectInfo.getVirtualTableStructure(), vt,
+                WasmGCClassInfoProvider.CLASS_FIELD_OFFSET);
+        var functionRef = new WasmStructGet(classInfoStruct.structure(), cls,
+                classInfoStruct.cloneFunctionIndex());
+        var call = new WasmCallReference(functionRef, classInfoStruct.cloneFunctionType());
+        call.getArguments().add(new WasmGetLocal(instance));
+        return call;
     }
 }
