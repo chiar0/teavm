@@ -513,6 +513,14 @@ public class StatementRenderer implements ExprVisitor, StatementVisitor {
         return variableNameGenerator.variableName(index);
     }
 
+    private boolean isNullComparison(BinaryExpr expr) {
+        return isNullConstant(expr.getFirstOperand()) || isNullConstant(expr.getSecondOperand());
+    }
+
+    private boolean isNullConstant(Expr expr) {
+        return expr instanceof ConstantExpr && ((ConstantExpr) expr).getValue() == null;
+    }
+
     private void visitBinary(BinaryExpr expr, String op, boolean guarded) {
         if (expr.getLocation() != null) {
             pushLocation(expr.getLocation());
@@ -720,12 +728,16 @@ public class StatementRenderer implements ExprVisitor, StatementVisitor {
                 case EQUALS:
                     if (expr.getType() == OperationType.INT) {
                         visitBinary(expr, "==", false);
+                    } else if (isNullComparison(expr)) {
+                        visitBinary(expr, "==", false);
                     } else {
                         visitBinary(expr, "===", false);
                     }
                     break;
                 case NOT_EQUALS:
                     if (expr.getType() == OperationType.INT) {
+                        visitBinary(expr, "!=", false);
+                    } else if (isNullComparison(expr)) {
                         visitBinary(expr, "!=", false);
                     } else {
                         visitBinary(expr, "!==", false);
