@@ -23,12 +23,16 @@ public class TThreadLocal<T> extends TObject {
     private Map<Object, Object> map;
     private boolean initialized;
     private T value;
+    private Supplier<? extends T> supplier;
 
     public TThreadLocal() {
         super();
     }
 
     protected T initialValue() {
+        if (supplier != null) {
+            return supplier.get();
+        }
         return null;
     }
 
@@ -94,12 +98,9 @@ public class TThreadLocal<T> extends TObject {
     }
 
     public static <S> TThreadLocal<S> withInitial(Supplier<? extends S> supplier) {
-        return new TThreadLocal<>() {
-            @Override
-            protected S initialValue() {
-                return supplier.get();
-            }
-        };
+        TThreadLocal<S> tl = new TThreadLocal<>();
+        tl.supplier = supplier;
+        return tl;
     }
 
     private static boolean isInMainThread() {
