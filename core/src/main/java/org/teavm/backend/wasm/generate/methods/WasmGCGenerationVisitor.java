@@ -759,6 +759,11 @@ public class WasmGCGenerationVisitor extends BaseWasmGenerationVisitor {
                 if (!isExtern(wasmTargetType)) {
                     result.acceptVisitor(typeInference);
                     var sourceType = (WasmType.Reference) typeInference.getSingleResult();
+                    if (!sourceType.isNullable()) {
+                        if (sourceType instanceof WasmType.CompositeReference) {
+                            sourceType = ((WasmType.CompositeReference) sourceType).composite.getReference();
+                        }
+                    }
                     var check = new WasmBlock(false);
                     check.setType(wasmTargetType.asBlock());
                     check.setLocation(expr.getLocation());
@@ -862,6 +867,12 @@ public class WasmGCGenerationVisitor extends BaseWasmGenerationVisitor {
 
         var sourceType = (WasmType.Reference) actualType;
         var targetType = expectedComposite.getReference();
+        if (actualStruct == expectedStruct && !sourceType.isNullable()) {
+            return expression;
+        }
+        if (!sourceType.isNullable()) {
+            sourceType = actualComposite.getReference();
+        }
         var check = new WasmBlock(false);
         check.setType(targetType.asBlock());
         check.setLocation(expression.getLocation());
