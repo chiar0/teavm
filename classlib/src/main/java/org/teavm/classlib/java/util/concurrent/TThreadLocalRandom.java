@@ -21,6 +21,12 @@ public class TThreadLocalRandom extends TRandom {
     private static TThreadLocalRandom current;
 
     private TThreadLocalRandom() {
+        super(0);
+    }
+
+    @Override
+    public void setSeed(long seed) {
+        // no-op: ThreadLocalRandom does not support manual seeding
     }
 
     public static TThreadLocalRandom current() {
@@ -56,10 +62,5 @@ public class TThreadLocalRandom extends TRandom {
     @Override
     public double nextDouble() {
         return Math.random();
-    }
-
-    @Override
-    public void setSeed(long seed) {
-        throw new UnsupportedOperationException();
     }
 }
