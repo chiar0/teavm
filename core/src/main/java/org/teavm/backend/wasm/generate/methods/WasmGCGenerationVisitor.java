@@ -230,18 +230,21 @@ public class WasmGCGenerationVisitor extends BaseWasmGenerationVisitor {
         accept(value, elementType);
         var wasmValue = result;
         if (needsArrayStoreCheck(elementType)) {
-            var elementRefType = (WasmType.Reference) elementType;
-            var block = new WasmBlock(false);
-            var checkBlock = new WasmBlock(false);
-            var test = new WasmTest(wasmValue, elementRefType);
-            checkBlock.getBody().add(new WasmBranch(test, checkBlock));
-            var callAse = new WasmCall(context.aseMethod());
-            var throwExpr = new WasmThrow(context.getExceptionTag());
-            throwExpr.getArguments().add(callAse);
-            checkBlock.getBody().add(throwExpr);
-            block.getBody().add(checkBlock);
-            block.getBody().add(new WasmArraySet(arrayType, array, index, wasmValue));
-            return block;
+            var aseFn = context.aseMethod();
+            if (aseFn != null) {
+                var elementRefType = (WasmType.Reference) elementType;
+                var block = new WasmBlock(false);
+                var checkBlock = new WasmBlock(false);
+                var test = new WasmTest(wasmValue, elementRefType);
+                checkBlock.getBody().add(new WasmBranch(test, checkBlock));
+                var callAse = new WasmCall(aseFn);
+                var throwExpr = new WasmThrow(context.getExceptionTag());
+                throwExpr.getArguments().add(callAse);
+                checkBlock.getBody().add(throwExpr);
+                block.getBody().add(checkBlock);
+                block.getBody().add(new WasmArraySet(arrayType, array, index, wasmValue));
+                return block;
+            }
         }
         return new WasmArraySet(arrayType, array, index, wasmValue);
     }

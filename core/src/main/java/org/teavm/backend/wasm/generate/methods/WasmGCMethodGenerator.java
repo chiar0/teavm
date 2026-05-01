@@ -319,7 +319,6 @@ public class WasmGCMethodGenerator implements BaseWasmFunctionRepository {
     private void generateMethodBody(MethodHolder method, WasmFunction function) {
         try {
             var ref = method.getReference();
-            System.err.println("GEN: " + ref.getClassName() + "::" + ref.getName());
             var customGenerator = customGenerators.get(method.getReference());
             if (customGenerator != null) {
                 generateCustomMethodBody(customGenerator, method.getReference(), function);
