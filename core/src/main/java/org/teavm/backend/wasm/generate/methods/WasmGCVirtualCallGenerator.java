@@ -56,9 +56,24 @@ public class WasmGCVirtualCallGenerator {
             return new WasmUnreachable();
         }
 
-        var entry = vtable.entry(method.getDescriptor());
-        var nonInterfaceAncestor = vtable.closestNonInterfaceAncestor();
-        if (entry == null || nonInterfaceAncestor == null) {
+        // For interface VTs, redirect to the non-interface ancestor's VT
+        // so the ref.cast targets a VT struct that's a supertype of all concrete VTs
+        var dispatchVT = vtable;
+        if (vtable.isFakeInterfaceRepresentative()) {
+            var ancestor = vtable.closestNonInterfaceAncestor();
+            if (ancestor != null) {
+                dispatchVT = ancestor;
+            }
+        }
+
+        var entry = dispatchVT.entry(method.getDescriptor());
+        if (entry == null) {
+            return new WasmUnreachable();
+        }
+
+        var dispatchClassInfo = classInfoProvider.getClassInfo(dispatchVT.getClassName());
+        var vtableStruct = dispatchClassInfo.getVirtualTableStructure();
+        if (vtableStruct == null) {
             return new WasmUnreachable();
         }
 
@@ -67,10 +82,7 @@ public class WasmGCVirtualCallGenerator {
         WasmExpression classRef = new WasmStructGet(objectClass.getStructure(),
                 new WasmGetLocal(instance), WasmGCClassInfoProvider.VT_FIELD_OFFSET);
         var index = WasmGCClassInfoProvider.VIRTUAL_METHOD_OFFSET + entry.getIndex();
-        var expectedInstanceClassInfo = classInfoProvider.getClassInfo(vtable.getClassName());
-        var expectedInstanceClassStruct = classInfoProvider.getClassInfo(
-                nonInterfaceAncestor.getClassName()).getStructure();
-        var vtableStruct = expectedInstanceClassInfo.getVirtualTableStructure();
+
         classRef = new WasmCast(classRef, vtableStruct.getNonNullReference());
 
         var functionRef = new WasmStructGet(vtableStruct, classRef, index);
@@ -80,6 +92,7 @@ public class WasmGCVirtualCallGenerator {
         WasmExpression instanceRef = new WasmGetLocal(instance);
         var instanceType = (WasmType.CompositeReference) instance.getType();
         var instanceStruct = (WasmStructure) instanceType.composite;
+        var expectedInstanceClassStruct = dispatchClassInfo.getStructure();
         if (!expectedInstanceClassStruct.isSupertypeOf(instanceStruct)) {
             var check = new WasmBlock(false);
             var targetType = expectedInstanceClassStruct.getNonNullReference();

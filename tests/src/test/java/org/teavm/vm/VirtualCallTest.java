@@ -262,4 +262,39 @@ public class VirtualCallTest {
             return "A.foo";
         }
     }
+
+    @Test
+    public void interfaceWithUnrelatedImplementors() {
+        interface Collector {
+            int size();
+        }
+        class ListCollector implements Collector {
+            private final int count;
+            ListCollector(int count) {
+                this.count = count;
+            }
+            @Override
+            public int size() {
+                return count;
+            }
+        }
+        class SetCollector implements Collector {
+            private final int count;
+            SetCollector(int count) {
+                this.count = count;
+            }
+            @Override
+            public int size() {
+                return count * 2;
+            }
+        }
+
+        var list = List.<Collector>of(new ListCollector(3), new SetCollector(5));
+        var sb = new StringBuilder();
+        for (var item : list) {
+            sb.append(item.size()).append(";");
+        }
+
+        assertEquals("3;10;", sb.toString());
+    }
 }

@@ -229,42 +229,12 @@ class WasmGCVirtualTableBuilder {
             if (table.cls.hasModifier(ElementModifier.INTERFACE)) {
                 var parent = table.commonImplementor != null
                         ? table.commonImplementor
-                        : findFirstConcreteImplementor(table);
+                        : rootTable;
                 setUpInterfaceInHierarchy(table, parent);
             } else if (table.liftedInterfaces != null) {
                 setUpInterfaceInHierarchy(table, table.parent);
             }
         }
-    }
-
-    private Table findFirstConcreteImplementor(Table interfaceTable) {
-        // Find the first non-interface class that implements this interface
-        // and use its parent as the commonImplementor fallback.
-        for (var candidate : tables) {
-            if (!candidate.cls.hasModifier(ElementModifier.INTERFACE)
-                    && !candidate.cls.hasModifier(ElementModifier.ABSTRACT)) {
-                var cls = candidate.cls;
-                while (cls != null) {
-                    for (var itfName : cls.getInterfaces()) {
-                        if (implementsInterface(itfName, interfaceTable.cls.getName())) {
-                            return candidate.parent != null ? candidate.parent : rootTable;
-                        }
-                    }
-                    cls = cls.getParent() != null ? classes.get(cls.getParent()) : null;
-                }
-            }
-        }
-        return rootTable;
-    }
-
-    private boolean implementsInterface(String interfaceName, String targetInterface) {
-        if (interfaceName.equals(targetInterface)) return true;
-        var cls = classes.get(interfaceName);
-        if (cls == null) return false;
-        for (var superItf : cls.getInterfaces()) {
-            if (implementsInterface(superItf, targetInterface)) return true;
-        }
-        return false;
     }
 
     private void setUpInterfaceInHierarchy(Table table, Table parent) {
@@ -325,10 +295,30 @@ class WasmGCVirtualTableBuilder {
 
     private void groupMethodsFromCallSites() {
         for (var methodRef : methodsAtCallSites) {
-            var className = mapClassName(methodRef.getClassName());
+            var className = remapInterfaceToAncestor(mapClassName(methodRef.getClassName()));
             var group = groupedMethodsAtCallSites.computeIfAbsent(className, k -> new LinkedHashSet<>());
             group.add(methodRef.getDescriptor());
         }
+    }
+
+    private String remapInterfaceToAncestor(String className) {
+        var table = tableMap.get(className);
+        if (table == null) {
+            return className;
+        }
+        var resolved = table.resolve();
+        if (!resolved.cls.hasModifier(ElementModifier.INTERFACE)) {
+            return className;
+        }
+        var ancestor = resolved.parent;
+        while (ancestor != null) {
+            var r = ancestor.resolve();
+            if (!r.cls.hasModifier(ElementModifier.INTERFACE)) {
+                return r.cls.getName();
+            }
+            ancestor = r.parent;
+        }
+        return rootTable.cls.getName();
     }
 
     private String mapClassName(String name) {

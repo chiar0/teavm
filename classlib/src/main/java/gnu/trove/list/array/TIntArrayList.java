@@ -28,11 +28,16 @@ public class TIntArrayList implements TIntCollection {
         no_entry_value = other.no_entry_value;
     }
     public TIntArrayList(TIntCollection c) {
-        this(c instanceof TIntArrayList ? ((TIntArrayList) c).size : 10);
+        this(c.size());
         if (c instanceof TIntArrayList) {
             TIntArrayList other = (TIntArrayList) c;
             System.arraycopy(other.data, 0, data, 0, other.size);
             size = other.size;
+        } else {
+            TIntIterator it = c.iterator();
+            while (it.hasNext()) {
+                add(it.next());
+            }
         }
     }
 
@@ -146,7 +151,12 @@ public class TIntArrayList implements TIntCollection {
             size += other.size;
             return other.size > 0;
         }
-        return false;
+        boolean modified = false;
+        for (gnu.trove.iterator.TIntIterator it = c.iterator(); it.hasNext(); ) {
+            add(it.next());
+            modified = true;
+        }
+        return modified;
     }
 
     public boolean removeAll(TIntCollection c) {
@@ -158,7 +168,11 @@ public class TIntArrayList implements TIntCollection {
             }
             return modified;
         }
-        return false;
+        boolean modified = false;
+        for (gnu.trove.iterator.TIntIterator it = c.iterator(); it.hasNext(); ) {
+            if (remove(it.next())) modified = true;
+        }
+        return modified;
     }
 
     // ---- Boxed overloads for generic interop ----
@@ -265,6 +279,8 @@ public class TIntArrayList implements TIntCollection {
             }
             return true;
         }
+        TIntIterator it = c.iterator();
+        while (it.hasNext()) if (!contains(it.next())) return false;
         return true;
     }
 
