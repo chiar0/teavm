@@ -108,27 +108,29 @@ public final class ReflectLink {
     }
 
     private static org.teavm.runtime.reflect.ClassInfo getClassInfo(Class<?> clazz) {
-        // WASM GC: avoid early returns and try-catch to prevent branch type divergence
-        // between ClassInfo (struct 26) and Object (struct 36) in the exit block.
+        // WASM GC: single return path, no early returns, to prevent branch type
+        // divergence between ClassInfo (struct 26) and Object (struct 36) in the
+        // exit block phi.
         org.teavm.runtime.reflect.ClassInfo result = null;
-        if (clazz == null) return result;
 
-        org.teavm.runtime.reflect.ClassInfo ci = TClass.getClassInfoOfClass(clazz);
-        if (ci != null) {
-            org.teavm.runtime.StringInfo n = ci.name();
-            if (n != null) {
-                result = ci;
+        if (clazz != null) {
+            org.teavm.runtime.reflect.ClassInfo ci = TClass.getClassInfoOfClass(clazz);
+            if (ci != null) {
+                org.teavm.runtime.StringInfo n = ci.name();
+                if (n != null) {
+                    result = ci;
+                }
             }
-        }
 
-        if (result == null) {
-            String name = clazz.getName();
-            org.teavm.runtime.reflect.ClassInfo.rewind();
-            while (result == null && org.teavm.runtime.reflect.ClassInfo.hasNext()) {
-                org.teavm.runtime.reflect.ClassInfo candidate = org.teavm.runtime.reflect.ClassInfo.next();
-                org.teavm.runtime.StringInfo candidateName = candidate.name();
-                if (candidateName != null && name.equals(candidateName.getStringObject())) {
-                    result = candidate;
+            if (result == null) {
+                String name = clazz.getName();
+                org.teavm.runtime.reflect.ClassInfo.rewind();
+                while (result == null && org.teavm.runtime.reflect.ClassInfo.hasNext()) {
+                    org.teavm.runtime.reflect.ClassInfo candidate = org.teavm.runtime.reflect.ClassInfo.next();
+                    org.teavm.runtime.StringInfo candidateName = candidate.name();
+                    if (candidateName != null && name.equals(candidateName.getStringObject())) {
+                        result = candidate;
+                    }
                 }
             }
         }
