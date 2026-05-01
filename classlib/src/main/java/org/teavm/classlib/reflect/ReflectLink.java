@@ -8,6 +8,7 @@ import java.util.IdentityHashMap;
 import java.util.Map;
 import java.util.Set;
 
+import org.teavm.classlib.io.SerializationDiagnostics;
 import org.teavm.classlib.java.lang.TClass;
 
 /**
@@ -177,8 +178,7 @@ public final class ReflectLink {
     private static int allocDebugCount = 0;
 
     public static AllocResult allocateWithReason(Class<?> clazz) {
-        boolean debug = false;
-        try { debug = (allocDebugCount < 3); } catch (Throwable t) {}
+        boolean debug = SerializationDiagnostics.isDebug() && allocDebugCount < 3;
         if (debug) {
             allocDebugCount++;
             System.out.println("[RL] allocateWithReason #" + allocDebugCount + " start");
