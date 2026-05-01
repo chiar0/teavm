@@ -108,30 +108,25 @@ public final class ReflectLink {
     }
 
     private static org.teavm.runtime.reflect.ClassInfo getClassInfo(Class<?> clazz) {
-        // WASM GC: single return path, no early returns, to prevent branch type
-        // divergence between ClassInfo (struct 26) and Object (struct 36) in the
-        // exit block phi.
+        // IMPORTANT: No early returns. Wrap in if (clazz != null) to avoid
+        // phi nodes that merge null (Object struct) with ClassInfo (unrelated struct).
         org.teavm.runtime.reflect.ClassInfo result = null;
 
         if (clazz != null) {
-            org.teavm.runtime.reflect.ClassInfo ci = TClass.getClassInfoOfClass(clazz);
-            if (ci != null) {
-                org.teavm.runtime.StringInfo n = ci.name();
-                if (n != null) {
-                    result = ci;
-                }
-            }
-
-            if (result == null) {
-                String name = clazz.getName();
+            // Iterate ClassInfo linked list by name.
+            // TClass.classInfo is null on WASM GC, so we can't use the fast path.
+            try {
+                String className = clazz.getName();
                 org.teavm.runtime.reflect.ClassInfo.rewind();
                 while (result == null && org.teavm.runtime.reflect.ClassInfo.hasNext()) {
-                    org.teavm.runtime.reflect.ClassInfo candidate = org.teavm.runtime.reflect.ClassInfo.next();
-                    org.teavm.runtime.StringInfo candidateName = candidate.name();
-                    if (candidateName != null && name.equals(candidateName.getStringObject())) {
-                        result = candidate;
+                    org.teavm.runtime.reflect.ClassInfo ci = org.teavm.runtime.reflect.ClassInfo.next();
+                    org.teavm.runtime.StringInfo si = ci.name();
+                    if (si != null && className.equals(si.getStringObject())) {
+                        result = ci;
                     }
                 }
+            } catch (Throwable t) {
+                // Give up
             }
         }
 
@@ -179,12 +174,19 @@ public final class ReflectLink {
      *       — skips {@code <clinit>} for classes with constructor-clinit issues.</li>
      * </ol>
      */
+    private static int allocDebugCount = 0;
+
     public static AllocResult allocateWithReason(Class<?> clazz) {
+        boolean debug = false;
+        try { debug = (allocDebugCount < 3); } catch (Throwable t) {}
+        if (debug) {
+            allocDebugCount++;
+            System.out.println("[RL] allocateWithReason #" + allocDebugCount + " start");
+        }
+
         // Skip singleton classes that must not be re-instantiated.
-        // grammar.Grammar uses a static singleton field; constructing a new
-        // instance via reflection runs the constructor body which may trigger
-        // generate() and corrupt the singleton's symbol tables.
         if (isSingletonClass(clazz)) {
+            if (debug) System.out.println("[RL] singleton, returning null");
             return new AllocResult(null, "singleton class: " + clazz.getName(), null);
         }
 
@@ -193,31 +195,14 @@ public final class ReflectLink {
         if (cachedStrategy != null) {
             AllocResult r = tryStrategy(clazz, cachedStrategy);
             if (r.obj != null) return r;
-            // Cache miss (strategy that worked before now fails) — fall through to full scan
         }
 
+        if (debug) System.out.println("[RL] trying rawNewInstance...");
         String[] errs = new String[4];
 
-        // Strategy 1: Declared no-arg constructor via reflection.
-        try {
-            java.lang.reflect.Constructor<?> ctor = CTOR_CACHE.get(clazz);
-            if (ctor == null) {
-                ctor = clazz.getDeclaredConstructor();
-                ctor.setAccessible(true);
-                CTOR_CACHE.put(clazz, ctor);
-            }
-            Object obj = ctor.newInstance();
-            if (obj != null) {
-                ALLOC_STRATEGY_CACHE.put(clazz, 1);
-                return new AllocResult(obj, null, errs);
-            }
-            errs[0] = "Constructor.newInstance() returned null";
-        } catch (Throwable t) {
-            errs[0] = "declared-ctor threw " + t.getClass().getName()
-                + ": " + t.getMessage();
-        }
-
-        // Strategy 2: ClassInfo.rawNewInstance — raw allocation without constructor.
+        // Strategy 2 (tried first): ClassInfo.rawNewInstance — raw allocation without constructor.
+        // On WASM GC, ctor.newInstance() triggers class init chains that can hang.
+        // Raw allocation is safe for deserialization since all fields are overwritten.
         boolean canRawAlloc = true;
         try {
             String cn = clazz.getName();
@@ -235,9 +220,13 @@ public final class ReflectLink {
         } catch (Throwable ignored) {}
         if (canRawAlloc) {
             try {
+                if (debug) System.out.println("[RL] calling getClassInfo...");
                 org.teavm.runtime.reflect.ClassInfo ci = getClassInfo(clazz);
+                if (debug) System.out.println("[RL] getClassInfo returned: " + (ci != null));
                 if (ci != null) {
+                    if (debug) System.out.println("[RL] calling ci.rawNewInstance...");
                     Object obj = ci.rawNewInstance();
+                    if (debug) System.out.println("[RL] rawNewInstance returned: " + (obj != null));
                     if (obj != null) {
                         ALLOC_STRATEGY_CACHE.put(clazz, 2);
                         return new AllocResult(obj, null, errs);
@@ -252,6 +241,25 @@ public final class ReflectLink {
             }
         } else {
             errs[1] = "skipped (boxed/intrinsic type)";
+        }
+
+        // Strategy 1 (fallback): Declared no-arg constructor via reflection.
+        try {
+            java.lang.reflect.Constructor<?> ctor = CTOR_CACHE.get(clazz);
+            if (ctor == null) {
+                ctor = clazz.getDeclaredConstructor();
+                ctor.setAccessible(true);
+                CTOR_CACHE.put(clazz, ctor);
+            }
+            Object obj = ctor.newInstance();
+            if (obj != null) {
+                ALLOC_STRATEGY_CACHE.put(clazz, 1);
+                return new AllocResult(obj, null, errs);
+            }
+            errs[0] = "Constructor.newInstance() returned null";
+        } catch (Throwable t) {
+            errs[0] = "declared-ctor threw " + t.getClass().getName()
+                + ": " + t.getMessage();
         }
 
         // Strategy 3: ClassInfo.newInstance — runs no-arg constructor + field init.

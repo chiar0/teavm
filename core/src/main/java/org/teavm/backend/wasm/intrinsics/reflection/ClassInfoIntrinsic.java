@@ -213,9 +213,13 @@ public class ClassInfoIntrinsic implements WasmGCIntrinsic {
                 context.tempVars().release(currentCache);
                 return block;
             }
-            case "newInstance":
-            case "rawNewInstance": {
+            case "newInstance": {
                 var fn = fieldAccess(invocation, context, ClassInfoStruct::createInstanceIndex);
+                var objType = context.classInfoProvider().getClassInfo("java.lang.Object");
+                return new WasmCallReference(fn, context.functionTypes().of(objType.getType()));
+            }
+            case "rawNewInstance": {
+                var fn = fieldAccess(invocation, context, ClassInfoStruct::rawCreateInstanceIndex);
                 var objType = context.classInfoProvider().getClassInfo("java.lang.Object");
                 return new WasmCallReference(fn, context.functionTypes().of(objType.getType()));
             }

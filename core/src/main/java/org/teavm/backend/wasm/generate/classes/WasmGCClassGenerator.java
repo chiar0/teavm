@@ -616,6 +616,11 @@ public class WasmGCClassGenerator implements WasmGCClassInfoProvider, WasmGCInit
                         target.add(setClassField(classInfo, classInfoCls.createInstanceIndex(),
                                 new WasmFunctionReference(fn)));
                     }
+                    if (classInfoCls.rawCreateInstanceIndex() >= 0) {
+                        var rawFn = createRawNewInstanceFunction(cls.getName(), classInfo);
+                        target.add(setClassField(classInfo, classInfoCls.rawCreateInstanceIndex(),
+                                new WasmFunctionReference(rawFn)));
+                    }
                     if (classInfoCls.initNewInstanceIndex() >= 0 && noArgConstructor != null) {
                         var fn = createNoopInitNewInstanceFunction(cls.getName());
                         target.add(setClassField(classInfo, classInfoCls.initNewInstanceIndex(),
@@ -1985,6 +1990,33 @@ public class WasmGCClassGenerator implements WasmGCClassInfoProvider, WasmGCInit
                         functionProvider.forInstanceMethod(constructor.getReference()),
                         new WasmGetLocal(resultLocal)));
             }
+        }
+
+        function.getBody().add(new WasmGetLocal(resultLocal));
+        function.setReferenced(true);
+        module.functions.add(function);
+        return function;
+    }
+
+    private WasmFunction createRawNewInstanceFunction(String className, WasmGCClassInfo classInfo) {
+        var objCls = standardClasses.objectClass();
+        var function = new WasmFunction(functionTypes.of(objCls.getType()));
+        function.setName(names.topLevel(className + "@rawNewInstance"));
+        var resultLocal = new WasmLocal(classInfo.getType(), "result");
+        function.add(resultLocal);
+
+        if (className.equals("java.lang.Class")) {
+            var classObjectFn = reflectionTypes.classInfo().classObjectFunction();
+            classObjectFn.setReferenced(true);
+            function.getBody().add(new WasmSetLocal(resultLocal,
+                    new WasmCall(classObjectFn, new WasmGetGlobal(classInfo.getPointer()))));
+        } else {
+            // Allocate without calling constructor — safe for deserialization
+            function.getBody().add(new WasmSetLocal(resultLocal,
+                    new WasmStructNewDefault(classInfo.getStructure())));
+            function.getBody().add(new WasmStructSet(objCls.getStructure(), new WasmGetLocal(resultLocal),
+                    WasmGCClassInfoProvider.VT_FIELD_OFFSET,
+                    new WasmGetGlobal(classInfo.getVirtualTablePointer())));
         }
 
         function.getBody().add(new WasmGetLocal(resultLocal));

@@ -87,6 +87,7 @@ public class ClassInfoStruct {
     private int copyArrayIndex = -1;
     private int nextClassIndex = -1;
     private int createInstanceIndex = -1;
+    private int rawCreateInstanceIndex = -1;
     private int initNewInstanceIndex = -1;
     private int reflectionInfoIndex = -1;
 
@@ -267,6 +268,8 @@ public class ClassInfoStruct {
             var objectClass = classInfoProvider.getClassInfo("java.lang.Object");
             createInstanceIndex = fields.size();
             fields.add(new WasmField(functionTypes.of(objectClass.getType()), "createInstance"));
+            rawCreateInstanceIndex = fields.size();
+            fields.add(new WasmField(functionTypes.of(objectClass.getType()), "rawCreateInstance"));
             initNewInstanceIndex = fields.size();
             fields.add(new WasmField(functionTypes.of(null, objectClass.getType()), "initNewInstance"));
         }
@@ -424,6 +427,11 @@ public class ClassInfoStruct {
     public int createInstanceIndex() {
         init();
         return createInstanceIndex;
+    }
+
+    public int rawCreateInstanceIndex() {
+        init();
+        return rawCreateInstanceIndex;
     }
 
     public int initNewInstanceIndex() {

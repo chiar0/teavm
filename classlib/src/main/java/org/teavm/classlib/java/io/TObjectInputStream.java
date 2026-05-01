@@ -363,6 +363,7 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
     // ═════════════════════════════════════════════════════════════════════════
 
     public final Object readObject() throws IOException, ClassNotFoundException {
+        System.out.println("[TIS] readObject() entered, stream available=" + in.available());
         while (true) {
             if (frameTop > 0 && chunkCounter > 0 && chunkCounter >= chunkLimit) {
                 chunkCounter = 0;
@@ -428,6 +429,9 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
             } catch (Throwable ignored) {}
         }
         int tc = readByte();
+        if (totalObjects < 3) {
+            System.out.println("[TIS] readLeafOrStartContainer tc=0x" + Integer.toHexString(tc) + " total=" + totalObjects + " avail=" + in.available());
+        }
         recordTrace(tc);
         chunkCounter++;  // Count every operation toward the chunk budget
         switch (tc) {
@@ -1045,11 +1049,17 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
         ClassSchema schema = schemaManifest.get(className);
 
         // ── Stage 1: Class.forName (cached) ──────────────────────────────
+        if ((totalObjects % 500) == 0) {
+            System.out.println("[TIS] Allocating object #" + totalObjects + " class=" + className);
+        }
         Class<?> clazz = classForNameCache.get(className);
         if (clazz == null && !classForNameCache.containsKey(className)) {
+            if (totalObjects < 5) System.out.println("[TIS] Class.forName(" + className + ")...");
             try {
                 clazz = Class.forName(className);
+                if (totalObjects < 5) System.out.println("[TIS] Class.forName(" + className + ") done");
             } catch (Throwable e) {
+                if (totalObjects < 5) System.out.println("[TIS] Class.forName(" + className + ") FAILED: " + e.getMessage());
                 if (listener != null) {
                     String reason = e.getClass().getName() + ": " + e.getMessage();
                     listener.onError("Class.forName", className,
@@ -1062,8 +1072,10 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
         // ── Stage 2: Allocate ─────────────────────────────────────────────
         Object obj = null;
         if (clazz != null) {
+            if (totalObjects < 5) System.out.println("[TIS] allocateInstance(" + className + ")...");
             try {
                 obj = allocateInstance(clazz);
+                if (totalObjects < 5) System.out.println("[TIS] allocateInstance(" + className + ") done, obj=" + (obj != null));
             } catch (Exception e) {
                 if (listener != null) {
                     listener.onError("allocate", className, e);

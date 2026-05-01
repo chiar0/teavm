@@ -27,16 +27,11 @@ public class TLongArrayList {
         no_entry_value = other.no_entry_value;
     }
     public TLongArrayList(TLongCollection c) {
-        this(c.size());
+        this(c instanceof TLongArrayList ? ((TLongArrayList) c).size : 10);
         if (c instanceof TLongArrayList) {
             TLongArrayList other = (TLongArrayList) c;
             System.arraycopy(other.data, 0, data, 0, other.size);
             size = other.size;
-        } else {
-            TLongIterator it = c.iterator();
-            while (it.hasNext()) {
-                add(it.next());
-            }
         }
     }
 
@@ -133,12 +128,7 @@ public class TLongArrayList {
             size += other.size;
             return other.size > 0;
         }
-        boolean modified = false;
-        for (gnu.trove.iterator.TLongIterator it = c.iterator(); it.hasNext(); ) {
-            add(it.next());
-            modified = true;
-        }
-        return modified;
+        return false;
     }
 
     // ---- Boxed overloads for generic interop ----

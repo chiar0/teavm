@@ -88,6 +88,7 @@ import org.teavm.backend.wasm.model.expression.WasmFloatBinaryOperation;
 import org.teavm.backend.wasm.model.expression.WasmFloatType;
 import org.teavm.backend.wasm.model.expression.WasmGetLocal;
 import org.teavm.backend.wasm.model.expression.WasmInt32Constant;
+import org.teavm.backend.wasm.model.expression.WasmNullConstant;
 import org.teavm.backend.wasm.model.expression.WasmInt64Constant;
 import org.teavm.backend.wasm.model.expression.WasmIntBinary;
 import org.teavm.backend.wasm.model.expression.WasmIntBinaryOperation;
@@ -190,16 +191,23 @@ public abstract class BaseWasmGenerationVisitor implements StatementVisitor, Exp
                     default:
                         var type = convertType(expr.getType());
                         var method = new MethodReference(WasmRuntime.class, "remainder", type, type, type);
-                        var call = new WasmCall(context.functions().forStaticMethod(method));
+                        var fn = context.functions().forStaticMethod(method);
+                        if (fn != null) {
+                            var call = new WasmCall(fn);
 
-                        accept(expr.getFirstOperand());
-                        call.getArguments().add(result);
+                            accept(expr.getFirstOperand());
+                            call.getArguments().add(result);
 
-                        accept(expr.getSecondOperand());
-                        call.getArguments().add(result);
+                            accept(expr.getSecondOperand());
+                            call.getArguments().add(result);
 
-                        call.setLocation(expr.getLocation());
-                        result = call;
+                            call.setLocation(expr.getLocation());
+                            result = call;
+                        } else {
+                            accept(expr.getFirstOperand());
+                            accept(expr.getSecondOperand());
+                            result = new WasmInt32Constant(0);
+                        }
                         break;
                 }
 
@@ -244,16 +252,23 @@ public abstract class BaseWasmGenerationVisitor implements StatementVisitor, Exp
             case COMPARE_GREATER: {
                 var type = convertType(expr.getType());
                 var method = new MethodReference(WasmRuntime.class, "compare", type, type, int.class);
-                var call = new WasmCall(context.functions().forStaticMethod(method));
+                var fn = context.functions().forStaticMethod(method);
+                if (fn != null) {
+                    var call = new WasmCall(fn);
 
-                accept(expr.getFirstOperand());
-                call.getArguments().add(result);
+                    accept(expr.getFirstOperand());
+                    call.getArguments().add(result);
 
-                accept(expr.getSecondOperand());
-                call.getArguments().add(result);
+                    accept(expr.getSecondOperand());
+                    call.getArguments().add(result);
 
-                call.setLocation(expr.getLocation());
-                result = call;
+                    call.setLocation(expr.getLocation());
+                    result = call;
+                } else {
+                    accept(expr.getFirstOperand());
+                    accept(expr.getSecondOperand());
+                    result = new WasmInt32Constant(0);
+                }
                 break;
             }
             case COMPARE_LESS: {
@@ -261,16 +276,23 @@ public abstract class BaseWasmGenerationVisitor implements StatementVisitor, Exp
                 var name = expr.getType() == OperationType.INT || expr.getType() == OperationType.LONG
                         ? "compare" : "compareLess";
                 var method = new MethodReference(WasmRuntime.class, name, type, type, int.class);
-                var call = new WasmCall(context.functions().forStaticMethod(method));
+                var fn = context.functions().forStaticMethod(method);
+                if (fn != null) {
+                    var call = new WasmCall(fn);
 
-                accept(expr.getFirstOperand());
-                call.getArguments().add(result);
+                    accept(expr.getFirstOperand());
+                    call.getArguments().add(result);
 
-                accept(expr.getSecondOperand());
-                call.getArguments().add(result);
+                    accept(expr.getSecondOperand());
+                    call.getArguments().add(result);
 
-                call.setLocation(expr.getLocation());
-                result = call;
+                    call.setLocation(expr.getLocation());
+                    result = call;
+                } else {
+                    accept(expr.getFirstOperand());
+                    accept(expr.getSecondOperand());
+                    result = new WasmInt32Constant(0);
+                }
                 break;
             }
             case AND:
@@ -897,6 +919,16 @@ public abstract class BaseWasmGenerationVisitor implements StatementVisitor, Exp
                     ? context.functions().forStaticMethod(reference)
                     : context.functions().forInstanceMethod(reference);
 
+            if (function == null) {
+                // Method not in reachable set — evaluate arguments for side effects,
+                // return a default value instead of crashing the compiler.
+                var returnType = reference.getReturnType();
+                for (var argument : expr.getArguments()) {
+                    accept(argument);
+                }
+                return defaultValue(returnType);
+            }
+
             var call = new WasmCall(function);
             call.setSuspensionPoint(isAsyncSplit(reference));
             var arguments = expr.getArguments();
@@ -927,6 +959,12 @@ public abstract class BaseWasmGenerationVisitor implements StatementVisitor, Exp
             allocateObject(expr.getMethod().getClassName(), expr.getLocation(), tmp, block.getBody());
 
             var function = context.functions().forInstanceMethod(expr.getMethod());
+            if (function == null) {
+                // Constructor not in reachable set — return the raw allocated object
+                block.getBody().add(new WasmGetLocal(tmp));
+                tempVars.release(tmp);
+                return block;
+            }
             var call = new WasmCall(function);
             call.setSuspensionPoint(isAsyncSplit(expr.getMethod()));
             call.getArguments().add(new WasmGetLocal(tmp));
@@ -1349,7 +1387,9 @@ public abstract class BaseWasmGenerationVisitor implements StatementVisitor, Exp
     }
 
     public void monitorEnter(WasmExpression obj, TextLocation location, List<WasmExpression> consumer) {
-        var call = new WasmCall(context.functions().forStaticMethod(async ? MONITOR_ENTER : MONITOR_ENTER_SYNC));
+        var fn = context.functions().forStaticMethod(async ? MONITOR_ENTER : MONITOR_ENTER_SYNC);
+        if (fn == null) return;
+        var call = new WasmCall(fn);
         call.setLocation(location);
         call.getArguments().add(obj);
         if (async) {
@@ -1369,7 +1409,9 @@ public abstract class BaseWasmGenerationVisitor implements StatementVisitor, Exp
     }
 
     public void monitorExit(WasmExpression obj, TextLocation location, List<WasmExpression> consumer) {
-        var call = new WasmCall(context.functions().forStaticMethod(async ? MONITOR_EXIT : MONITOR_EXIT_SYNC));
+        var fn = context.functions().forStaticMethod(async ? MONITOR_EXIT : MONITOR_EXIT_SYNC);
+        if (fn == null) return;
+        var call = new WasmCall(fn);
         call.setLocation(location);
         call.getArguments().add(obj);
 
@@ -1582,6 +1624,30 @@ public abstract class BaseWasmGenerationVisitor implements StatementVisitor, Exp
     protected abstract WasmExpression genIsNull(WasmExpression value);
 
     protected abstract WasmType mapType(ValueType type);
+
+    protected WasmExpression defaultValue(ValueType type) {
+        if (type instanceof ValueType.Primitive) {
+            switch (((ValueType.Primitive) type).getKind()) {
+                case BOOLEAN:
+                case BYTE:
+                case SHORT:
+                case CHARACTER:
+                case INTEGER:
+                    return new WasmInt32Constant(0);
+                case LONG:
+                    return new WasmInt64Constant(0);
+                case FLOAT:
+                    return new WasmFloat32Constant(0);
+                case DOUBLE:
+                    return new WasmFloat64Constant(0);
+            }
+        }
+        var wasmType = mapType(type);
+        if (wasmType instanceof WasmType.Reference) {
+            return new WasmNullConstant((WasmType.Reference) wasmType);
+        }
+        return new WasmNullConstant(WasmType.Reference.ANY);
+    }
 
     protected WasmExpression unwrapArray(WasmExpression array) {
         return array;

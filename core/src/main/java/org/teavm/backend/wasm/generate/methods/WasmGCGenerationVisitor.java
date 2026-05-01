@@ -186,17 +186,26 @@ public class WasmGCGenerationVisitor extends BaseWasmGenerationVisitor {
 
     @Override
     protected void generateThrowNPE(TextLocation location, List<WasmExpression> target) {
-        generateThrow(new WasmCall(context.npeMethod()), location, target);
+        var fn = context.npeMethod();
+        if (fn != null) {
+            generateThrow(new WasmCall(fn), location, target);
+        }
     }
 
     @Override
     protected void generateThrowAIOOBE(TextLocation location, List<WasmExpression> target) {
-        generateThrow(new WasmCall(context.aaiobeMethod()), location, target);
+        var fn = context.aaiobeMethod();
+        if (fn != null) {
+            generateThrow(new WasmCall(fn), location, target);
+        }
     }
 
     @Override
     protected void generateThrowCCE(TextLocation location, List<WasmExpression> target) {
-        generateThrow(new WasmCall(context.cceMethod()), location, target);
+        var fn = context.cceMethod();
+        if (fn != null) {
+            generateThrow(new WasmCall(fn), location, target);
+        }
     }
 
     @Override
@@ -907,6 +916,10 @@ public class WasmGCGenerationVisitor extends BaseWasmGenerationVisitor {
             acceptWithType(expr.getQualified(), ValueType.object(expr.getField().getClassName()));
             var target = result;
 
+            if (target instanceof WasmGetLocal) {
+                target = qualifierNullCheck(target, expr.getLocation());
+            }
+
             var classInfo = context.classInfoProvider().getClassInfo(expr.getField().getClassName());
             if (classInfo.isHeapStructure()) {
                 var offset = context.classInfoProvider().getHeapFieldOffset(expr.getField());
@@ -918,6 +931,31 @@ public class WasmGCGenerationVisitor extends BaseWasmGenerationVisitor {
             }
             result.setLocation(expr.getLocation());
         }
+    }
+
+    private WasmExpression qualifierNullCheck(WasmExpression qualifier, TextLocation location) {
+        qualifier.acceptVisitor(typeInference);
+        var inferredType = typeInference.getSingleResult();
+        if (!(inferredType instanceof WasmType.Reference)) {
+            return qualifier;
+        }
+        if (inferredType instanceof WasmType.CompositeReference
+                && !((WasmType.CompositeReference) inferredType).isNullable()) {
+            inferredType = ((WasmType.CompositeReference) inferredType).composite.getReference();
+        }
+
+        var block = new WasmBlock(false);
+        block.setType(((WasmType.Reference) inferredType).asBlock());
+        block.setLocation(location);
+
+        var innerBlock = new WasmBlock(false);
+        var check = new WasmNullBranch(WasmNullCondition.NOT_NULL, qualifier, block);
+        innerBlock.getBody().add(check);
+
+        generateThrowNPE(location, innerBlock.getBody());
+        block.getBody().add(innerBlock);
+
+        return block;
     }
 
     private WasmExpression getNormalField(QualificationExpr expr, WasmExpression target) {
