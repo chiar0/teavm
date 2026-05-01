@@ -256,7 +256,7 @@ public class WasmGCGenerationVisitor extends BaseWasmGenerationVisitor {
         if (qualified == null) {
             var global = context.classInfoProvider().getStaticFieldLocation(field);
             accept(value, global.getType());
-            var wasmValue = result;
+            var wasmValue = forceType(result, global.getType());
             expr = new WasmSetGlobal(global, wasmValue);
         } else {
             acceptWithType(qualified, ValueType.object(field.getClassName()));
@@ -277,8 +277,10 @@ public class WasmGCGenerationVisitor extends BaseWasmGenerationVisitor {
         var struct = (WasmStructure) type.composite;
         var fieldIndex = context.classInfoProvider().getFieldIndex(field);
         if (fieldIndex >= 0) {
-            accept(value, struct.getFields().get(fieldIndex).getUnpackedType());
-            return new WasmStructSet(struct, target, fieldIndex, result);
+            var fieldType = struct.getFields().get(fieldIndex).getUnpackedType();
+            accept(value, fieldType);
+            var coerced = forceType(result, fieldType);
+            return new WasmStructSet(struct, target, fieldIndex, coerced);
         } else {
             accept(value);
             return result;
@@ -865,9 +867,7 @@ public class WasmGCGenerationVisitor extends BaseWasmGenerationVisitor {
 
         var actualStruct = (WasmStructure) actualComposite;
         var expectedStruct = (WasmStructure) expectedComposite;
-        if (!actualStruct.isSupertypeOf(expectedStruct)) {
-            return expression;
-        }
+        var related = actualStruct.isSupertypeOf(expectedStruct);
 
         var sourceType = (WasmType.Reference) actualType;
         var targetType = expectedComposite.getReference();
@@ -876,6 +876,14 @@ public class WasmGCGenerationVisitor extends BaseWasmGenerationVisitor {
         }
         if (!sourceType.isNullable()) {
             sourceType = actualComposite.getReference();
+        }
+        // When the actual and expected structs share no WASM supertype relationship
+        // (e.g. ClassInfo struct vs Object struct — Java-related but WASM-unrelated),
+        // the br_on_cast validator rejects the cast because the source type is not
+        // a supertype of the target. Route the value through the common nullable
+        // `(ref null struct)` supertype so validation succeeds.
+        if (!related) {
+            sourceType = WasmType.STRUCT;
         }
         var check = new WasmBlock(false);
         check.setType(targetType.asBlock());

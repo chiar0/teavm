@@ -40,14 +40,6 @@ public final class ReflectLink {
     private static final IdentityHashMap<Class<?>, java.lang.reflect.Constructor<?>> CTOR_CACHE =
         new IdentityHashMap<>();
 
-    /** Cache ClassInfo lookups that required the slow path (linear scan). */
-    private static final IdentityHashMap<Class<?>, org.teavm.runtime.reflect.ClassInfo> CLASSINFO_CACHE =
-        new IdentityHashMap<>();
-
-    /** Sentinel value in CLASSINFO_CACHE for classes whose ClassInfo was not found. */
-    private static final org.teavm.runtime.reflect.ClassInfo CLASSINFO_NULL_SENTINEL =
-        new org.teavm.runtime.reflect.ClassInfo();
-
     /** Cache classFromDescriptor results to avoid repeated string parsing and Class.forName. */
     private static final HashMap<String, Class<?>> DESCRIPTOR_CACHE = new HashMap<>();
     static {
@@ -123,7 +115,7 @@ public final class ReflectLink {
 
         org.teavm.runtime.reflect.ClassInfo ci = TClass.getClassInfoOfClass(clazz);
         if (ci != null) {
-            org.teavm.runtime.reflect.TStringAbstract n = ci.name();
+            org.teavm.runtime.StringInfo n = ci.name();
             if (n != null) {
                 result = ci;
             }
@@ -134,7 +126,7 @@ public final class ReflectLink {
             org.teavm.runtime.reflect.ClassInfo.rewind();
             while (result == null && org.teavm.runtime.reflect.ClassInfo.hasNext()) {
                 org.teavm.runtime.reflect.ClassInfo candidate = org.teavm.runtime.reflect.ClassInfo.next();
-                org.teavm.runtime.reflect.TStringAbstract candidateName = candidate.name();
+                org.teavm.runtime.StringInfo candidateName = candidate.name();
                 if (candidateName != null && name.equals(candidateName.getStringObject())) {
                     result = candidate;
                 }
