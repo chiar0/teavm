@@ -77,6 +77,7 @@ public class InProcessBuildStrategy implements BuildStrategy {
     private TeaVMToolLog log = new EmptyTeaVMToolLog();
     private boolean shortFileNames;
     private boolean assertionsRemoved;
+    private String[] reflectionPackages;
     private boolean emitOnErrors;
 
     @Override
@@ -237,6 +238,11 @@ public class InProcessBuildStrategy implements BuildStrategy {
     }
 
     @Override
+    public void setReflectionPackages(String[] reflectionPackages) {
+        this.reflectionPackages = reflectionPackages;
+    }
+
+    @Override
     public void setMaxHeapSize(int maxHeapSize) {
         this.maxHeapSize = maxHeapSize;
     }
@@ -310,6 +316,7 @@ public class InProcessBuildStrategy implements BuildStrategy {
         tool.setShortFileNames(shortFileNames);
         tool.setAssertionsRemoved(assertionsRemoved);
         tool.setEmitOnErrors(emitOnErrors);
+        tool.setReflectionPackages(reflectionPackages);
 
         tool.getProperties().putAll(properties);
 

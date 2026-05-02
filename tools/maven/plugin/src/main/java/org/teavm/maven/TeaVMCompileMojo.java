@@ -148,6 +148,9 @@ public class TeaVMCompileMojo extends AbstractMojo {
     @Parameter(defaultValue = "${project.build.directory}/teavm-cache")
     private File cacheDirectory;
 
+    @Parameter
+    private String[] reflectionPackages;
+
     @Parameter(property = "teavm.wasmVersion", defaultValue = "V_0x1")
     private WasmBinaryVersion wasmVersion = WasmBinaryVersion.V_0x1;
 
@@ -219,6 +222,7 @@ public class TeaVMCompileMojo extends AbstractMojo {
             builder.setShortFileNames(shortFileNames);
             builder.setAssertionsRemoved(assertionsRemoved);
             builder.setEmitOnErrors(emitOnErrors);
+            builder.setReflectionPackages(reflectionPackages);
 
         } catch (RuntimeException e) {
             throw new MojoExecutionException("Unexpected error occurred", e);

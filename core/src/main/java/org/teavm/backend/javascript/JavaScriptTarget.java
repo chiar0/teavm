@@ -104,6 +104,7 @@ import org.teavm.model.transformation.NullCheckInsertion;
 import org.teavm.model.util.DefaultVariableCategoryProvider;
 import org.teavm.model.util.VariableCategoryProvider;
 import org.teavm.reflection.AnnotationGenerationHelper;
+import org.teavm.reflection.PackagePatternReflectionSupplier;
 import org.teavm.reflection.ReflectionDependencyListener;
 import org.teavm.runtime.reflect.ClassInfo;
 import org.teavm.vm.BuildTarget;
@@ -141,8 +142,13 @@ public class JavaScriptTarget implements TeaVMTarget, TeaVMJavaScriptHost {
     private JSModuleType moduleType = JSModuleType.UMD;
     private List<ExportedDeclaration> exports = new ArrayList<>();
     private int maxTopLevelNames = 80_000;
+    private String[] reflectionPackages;
 
     private ReflectionDependencyListener reflection;
+
+    public void setReflectionPackages(String[] reflectionPackages) {
+        this.reflectionPackages = reflectionPackages;
+    }
 
     @Override
     public List<ClassHolderTransformer> getTransformers() {
@@ -256,6 +262,10 @@ public class JavaScriptTarget implements TeaVMTarget, TeaVMJavaScriptHost {
         var reflectionSuppliers = new ArrayList<ReflectionSupplier>();
         for (var supplier : ServiceLoader.load(ReflectionSupplier.class, dependencyAnalyzer.getClassLoader())) {
             reflectionSuppliers.add(supplier);
+        }
+        if (reflectionPackages != null && reflectionPackages.length > 0) {
+            reflectionSuppliers.add(new PackagePatternReflectionSupplier(
+                    List.of(reflectionPackages)));
         }
         reflection = new ReflectionDependencyListener(reflectionSuppliers, new AnnotationGenerationHelper());
         addVirtualMethods((ctx, method) -> reflection.isVirtual(method));

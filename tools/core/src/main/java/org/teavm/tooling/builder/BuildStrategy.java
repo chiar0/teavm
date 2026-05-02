@@ -89,6 +89,8 @@ public interface BuildStrategy {
 
     void setMinHeapSize(int minHeapSize);
 
+    void setReflectionPackages(String[] reflectionPackages);
+
     void setMaxHeapSize(int maxHeapSize);
 
     void setMinDirectBuffersSize(int minDirectBuffersSize);

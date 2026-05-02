@@ -139,6 +139,7 @@ import org.teavm.model.util.AsyncMethodFinder;
 import org.teavm.model.util.DefaultVariableCategoryProvider;
 import org.teavm.model.util.VariableCategoryProvider;
 import org.teavm.reflection.AnnotationGenerationHelper;
+import org.teavm.reflection.PackagePatternReflectionSupplier;
 import org.teavm.reflection.ReflectionDependencyListener;
 import org.teavm.runtime.Allocator;
 import org.teavm.runtime.CallSite;
@@ -195,6 +196,7 @@ public class CTarget implements TeaVMTarget, TeaVMCHost {
     private boolean obfuscated;
     private List<CallSiteDescriptor> callSites = new ArrayList<>();
     private ReflectionDependencyListener reflection;
+    private String[] reflectionPackages;
 
     public CTarget(CNameProvider nameProvider) {
         rawNameProvider = nameProvider;
@@ -218,6 +220,10 @@ public class CTarget implements TeaVMTarget, TeaVMCHost {
 
     public void setHeapDump(boolean heapDump) {
         this.heapDump = heapDump;
+    }
+
+    public void setReflectionPackages(String[] reflectionPackages) {
+        this.reflectionPackages = reflectionPackages;
     }
 
     public void setAstCache(MethodNodeCache astCache) {
@@ -352,6 +358,10 @@ public class CTarget implements TeaVMTarget, TeaVMCHost {
         var reflectionSuppliers = new ArrayList<ReflectionSupplier>();
         for (var supplier : ServiceLoader.load(ReflectionSupplier.class, dependencyAnalyzer.getClassLoader())) {
             reflectionSuppliers.add(supplier);
+        }
+        if (reflectionPackages != null && reflectionPackages.length > 0) {
+            reflectionSuppliers.add(new PackagePatternReflectionSupplier(
+                    List.of(reflectionPackages)));
         }
         reflection = new ReflectionDependencyListener(reflectionSuppliers, new AnnotationGenerationHelper());
         dependencyAnalyzer.addDependencyListener(reflection);

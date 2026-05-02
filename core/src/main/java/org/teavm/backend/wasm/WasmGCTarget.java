@@ -22,6 +22,7 @@ import java.lang.ref.ReferenceQueue;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
@@ -71,6 +72,7 @@ import org.teavm.backend.wasm.transformation.ClassLoaderResourceTransformation;
 import org.teavm.backend.wasm.transformation.EntryPointTransformation;
 import org.teavm.backend.wasm.transformation.ReferenceQueueTransformation;
 import org.teavm.classlib.ReflectionSupplier;
+import org.teavm.reflection.PackagePatternReflectionSupplier;
 import org.teavm.common.JsonUtil;
 import org.teavm.dependency.DependencyAnalyzer;
 import org.teavm.dependency.DependencyInfo;
@@ -122,6 +124,7 @@ public class WasmGCTarget implements TeaVMTarget, TeaVMWasmGCHost {
     private EntryPointTransformation entryPointTransformation = new EntryPointTransformation();
     private List<WasmGCClassConsumer> classConsumers = new ArrayList<>();
     private List<Supplier<Collection<MethodReference>>> additionalMethodsOnCallSites = new ArrayList<>();
+    private String[] reflectionPackages;
 
     private ReflectionDependencyListener reflection;
 
@@ -133,6 +136,10 @@ public class WasmGCTarget implements TeaVMTarget, TeaVMWasmGCHost {
 
     public void setObfuscated(boolean obfuscated) {
         this.obfuscated = obfuscated;
+    }
+
+    public void setReflectionPackages(String[] reflectionPackages) {
+        this.reflectionPackages = reflectionPackages;
     }
 
     public void setStrict(boolean strict) {
@@ -249,6 +256,10 @@ public class WasmGCTarget implements TeaVMTarget, TeaVMWasmGCHost {
         var reflectionSuppliers = new ArrayList<ReflectionSupplier>();
         for (var supplier : ServiceLoader.load(ReflectionSupplier.class, dependencyAnalyzer.getClassLoader())) {
             reflectionSuppliers.add(supplier);
+        }
+        if (reflectionPackages != null && reflectionPackages.length > 0) {
+            reflectionSuppliers.add(new PackagePatternReflectionSupplier(
+                    List.of(reflectionPackages)));
         }
         reflection = new ReflectionDependencyListener(reflectionSuppliers, new AnnotationGenerationHelper());
         dependencyAnalyzer.addDependencyListener(reflection);

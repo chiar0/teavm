@@ -125,6 +125,7 @@ public class TeaVMTool {
     private boolean shortFileNames;
     private boolean assertionsRemoved;
     private boolean emitOnErrors;
+    private String[] reflectionPackages;
     private SourceMapBuilder wasmSourceMapWriter;
 
     public File getTargetDirectory() {
@@ -153,6 +154,10 @@ public class TeaVMTool {
 
     public void setMaxTopLevelNames(int maxTopLevelNames) {
         this.maxTopLevelNames = maxTopLevelNames;
+    }
+
+    public void setReflectionPackages(String[] reflectionPackages) {
+        this.reflectionPackages = reflectionPackages;
     }
 
     public boolean isIncremental() {
@@ -380,6 +385,7 @@ public class TeaVMTool {
                 ? new DebugInformationBuilder(referenceCache) : null;
         javaScriptTarget.setDebugEmitter(debugEmitter);
         javaScriptTarget.setModuleType(jsModuleType);
+        javaScriptTarget.setReflectionPackages(reflectionPackages);
 
         return javaScriptTarget;
     }
@@ -398,6 +404,7 @@ public class TeaVMTool {
             target.setSourceMapBuilder(wasmSourceMapWriter);
             target.setSourceMapLocation(getResolvedTargetFileName() + ".map");
         }
+        target.setReflectionPackages(reflectionPackages);
         return target;
     }
 
@@ -408,6 +415,7 @@ public class TeaVMTool {
         cTarget.setLineNumbersGenerated(debugInformationGenerated);
         cTarget.setHeapDump(heapDump);
         cTarget.setObfuscated(obfuscated);
+        cTarget.setReflectionPackages(reflectionPackages);
         cTarget.setFileNames(shortFileNames
                 ? new ShorteningFileNameProvider(new SimpleFileNameProvider())
                 : new SimpleFileNameProvider());

@@ -240,6 +240,11 @@ public class RemoteBuildStrategy implements BuildStrategy {
     }
 
     @Override
+    public void setReflectionPackages(String[] reflectionPackages) {
+        request.reflectionPackages = reflectionPackages != null ? reflectionPackages.clone() : null;
+    }
+
+    @Override
     public BuildResult build() throws BuildException {
         RemoteBuildResponse response;
         try {
