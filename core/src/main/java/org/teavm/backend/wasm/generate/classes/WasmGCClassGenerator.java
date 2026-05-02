@@ -1326,22 +1326,22 @@ public class WasmGCClassGenerator implements WasmGCClassInfoProvider, WasmGCInit
 
             var itemType = type.getItemType();
 
-            {
+            if (metadataRequirements.hasArrayLength()) {
                 var lengthFunction = getArrayLengthFunction(classInfo.structure);
                 target.add(setClassField(classInfo, reflectionTypes.classInfo().arrayLengthIndex(),
                         new WasmFunctionReference(lengthFunction)));
             }
-            {
+            if (metadataRequirements.hasArrayGet()) {
                 var getFunction = getArrayGetFunction(itemType);
                 target.add(setClassField(classInfo, reflectionTypes.classInfo().getItemIndex(),
                         new WasmFunctionReference(getFunction)));
             }
-            {
+            if (metadataRequirements.hasArraySet()) {
                 var setFunction = getArraySetFunction(itemType);
                 target.add(setClassField(classInfo, reflectionTypes.classInfo().putItemIndex(),
                         new WasmFunctionReference(setFunction)));
             }
-            {
+            if (metadataRequirements.hasArrayCopy()) {
                 var copyFunction = getArrayCopyFunction(itemType);
                 target.add(setClassField(classInfo, reflectionTypes.classInfo().copyArrayIndex(),
                         new WasmFunctionReference(copyFunction)));

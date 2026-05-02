@@ -83,17 +83,17 @@ public abstract class TAbstractList<E> extends TAbstractCollection<E> implements
 
     @Override
     public E set(int index, E element) {
-        throw new TUnsupportedOperationException();
+        throw new TUnsupportedOperationException("TAbstractList.set(" + index + ")");
     }
 
     @Override
     public void add(int index, E element) {
-        throw new TUnsupportedOperationException();
+        throw new TUnsupportedOperationException("TAbstractList.add(" + index + ")");
     }
 
     @Override
     public E remove(int index) {
-        throw new TUnsupportedOperationException();
+        throw new TUnsupportedOperationException("TAbstractList.remove(" + index + ")");
     }
 
     @Override

@@ -69,7 +69,7 @@ public abstract class TAbstractCollection<E> extends TObject implements TCollect
 
     @Override
     public boolean add(E e) {
-        throw new TUnsupportedOperationException();
+        throw new TUnsupportedOperationException("TAbstractCollection.add");
     }
 
     @Override

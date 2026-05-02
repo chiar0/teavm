@@ -94,7 +94,7 @@ public abstract class TAbstractMap<K, V> extends TObject implements TMap<K, V> {
 
         @Override
         public V setValue(V value) {
-            throw new TUnsupportedOperationException();
+            throw new TUnsupportedOperationException("TAbstractMap.setValue");
         }
 
         @Override
@@ -176,7 +176,7 @@ public abstract class TAbstractMap<K, V> extends TObject implements TMap<K, V> {
 
     @Override
     public V put(K key, V value) {
-        throw new TUnsupportedOperationException();
+        throw new TUnsupportedOperationException("TAbstractMap.put");
     }
 
     @Override
