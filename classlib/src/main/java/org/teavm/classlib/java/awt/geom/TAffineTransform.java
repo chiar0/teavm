@@ -125,6 +125,44 @@ public class TAffineTransform {
         return dst;
     }
 
+    public void preConcatenate(TAffineTransform other) {
+        double t00 = other.m00 * m00 + other.m01 * m10;
+        double t01 = other.m00 * m01 + other.m01 * m11;
+        double t02 = other.m00 * m02 + other.m01 * m12 + other.m02;
+        double t10 = other.m10 * m00 + other.m11 * m10;
+        double t11 = other.m10 * m01 + other.m11 * m11;
+        double t12 = other.m10 * m02 + other.m11 * m12 + other.m12;
+        m00 = t00;
+        m01 = t01;
+        m02 = t02;
+        m10 = t10;
+        m11 = t11;
+        m12 = t12;
+    }
+
+    public void shear(double shx, double shy) {
+        TAffineTransform s = new TAffineTransform();
+        s.m01 = shx;
+        s.m10 = shy;
+        concatenate(s);
+    }
+
+    public boolean isIdentity() {
+        return m00 == 1 && m10 == 0 && m01 == 0 && m11 == 1 && m02 == 0 && m12 == 0;
+    }
+
+    @Override
+    public Object clone() {
+        TAffineTransform t = new TAffineTransform();
+        t.m00 = m00;
+        t.m10 = m10;
+        t.m01 = m01;
+        t.m11 = m11;
+        t.m02 = m02;
+        t.m12 = m12;
+        return t;
+    }
+
     public double getTranslateX() { return m02; }
     public double getTranslateY() { return m12; }
     public double getScaleX() { return m00; }

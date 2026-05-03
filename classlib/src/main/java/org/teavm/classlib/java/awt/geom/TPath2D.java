@@ -104,9 +104,44 @@ public class TPath2D implements TShape {
     }
 
     public void append(TShape s, boolean connect) {
-        // Flatten: just add bounds as a rectangle approximation
-        if (connect && !needsMove) {
-            lineTo(lastX, lastY);
+        if (s instanceof TPath2D) {
+            TPath2D src = (TPath2D) s;
+            if (connect && !needsMove) {
+                if (src.segments.size() > 0) {
+                    double[] first = src.coords.get(0);
+                    lineTo(first[0], first[1]);
+                }
+            }
+            for (int i = 0; i < src.segments.size(); i++) {
+                int type = src.segments.get(i)[0];
+                double[] c = src.coords.get(i);
+                switch (type) {
+                    case SEG_MOVETO:
+                        moveTo(c[0], c[1]);
+                        break;
+                    case SEG_LINETO:
+                        lineTo(c[0], c[1]);
+                        break;
+                    case SEG_QUADTO:
+                        quadTo(c[0], c[1], c[2], c[3]);
+                        break;
+                    case SEG_CUBICTO:
+                        curveTo(c[0], c[1], c[2], c[3], c[4], c[5]);
+                        break;
+                    case SEG_CLOSE:
+                        closePath();
+                        break;
+                }
+            }
+        } else {
+            // Fallback: lineTo shape center
+            if (connect && !needsMove) {
+                lineTo(lastX, lastY);
+            }
+            TRectangle2D b = s.getBounds2D();
+            if (b != null && !b.isEmpty()) {
+                lineTo(b.getCenterX(), b.getCenterY());
+            }
         }
     }
 

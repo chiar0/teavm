@@ -15,13 +15,15 @@
  */
 package org.teavm.classlib.java.awt.geom;
 
+import org.teavm.classlib.java.awt.TShape;
+
 public abstract class TArc2D {
 
     public static final int OPEN = 0;
     public static final int CHORD = 1;
     public static final int PIE = 2;
 
-    public static class Double extends TArc2D {
+    public static class Double extends TArc2D implements TShape {
         public double x;
         public double y;
         public double width;
@@ -74,6 +76,11 @@ public abstract class TArc2D {
 
         public int getArcType() {
             return type;
+        }
+
+        @Override
+        public TRectangle2D getBounds2D() {
+            return new TRectangle2D.Double(x, y, width, height);
         }
     }
 }

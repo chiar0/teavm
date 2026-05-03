@@ -15,7 +15,7 @@
  */
 package org.teavm.classlib.java.awt;
 
-public class TColor {
+public class TColor implements TPaint {
 
     public static final int RGB = 1;
 
@@ -112,4 +112,22 @@ public class TColor {
     public static final TColor ORANGE = orange;
     public static final TColor pink = new TColor(255, 175, 175);
     public static final TColor PINK = pink;
+
+    public TColor brighter() {
+        int r = getRed(), g = getGreen(), b = getBlue();
+        int i = (int)(1.0 / (1.0 - 0.7));
+        if (r == 0 && g == 0 && b == 0) return new TColor(i, i, i, getAlpha());
+        if (r > 0 && r < i) r = i;
+        if (g > 0 && g < i) g = i;
+        if (b > 0 && b < i) b = i;
+        return new TColor(Math.min((int)(r / 0.7), 255),
+                          Math.min((int)(g / 0.7), 255),
+                          Math.min((int)(b / 0.7), 255), getAlpha());
+    }
+
+    public TColor darker() {
+        return new TColor(Math.max((int)(getRed() * 0.7), 0),
+                          Math.max((int)(getGreen() * 0.7), 0),
+                          Math.max((int)(getBlue() * 0.7), 0), getAlpha());
+    }
 }

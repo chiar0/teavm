@@ -26,6 +26,7 @@ public class TGraphics2D extends TGraphics {
     protected TRenderingHints hints = new TRenderingHints((java.util.Map<TRenderingHints.Key, ?>) null);
     protected TColor background = new TColor(0, 0, 0, 0);
     protected Object paint;
+    protected Object composite;
 
     @Override
     public TGraphics create() {
@@ -37,6 +38,7 @@ public class TGraphics2D extends TGraphics {
         g.transform = new TAffineTransform();
         g.paint = this.paint;
         g.background = this.background;
+        g.composite = this.composite;
         return g;
     }
 
@@ -49,6 +51,9 @@ public class TGraphics2D extends TGraphics {
 
     public Object getPaint() { return paint; }
     public void setPaint(Object p) { this.paint = p; }
+
+    public Object getComposite() { return composite; }
+    public void setComposite(Object c) { this.composite = c; }
 
     public TColor getBackground() { return background; }
     public void setBackground(TColor c) { this.background = c; }

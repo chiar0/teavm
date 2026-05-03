@@ -15,9 +15,11 @@
  */
 package org.teavm.classlib.java.awt.geom;
 
+import org.teavm.classlib.java.awt.TShape;
+
 public abstract class TRoundRectangle2D {
 
-    public static class Double extends TRoundRectangle2D {
+    public static class Double extends TRoundRectangle2D implements TShape {
         public double x;
         public double y;
         public double width;
@@ -59,6 +61,11 @@ public abstract class TRoundRectangle2D {
 
         public double getArcHeight() {
             return archeight;
+        }
+
+        @Override
+        public TRectangle2D getBounds2D() {
+            return new TRectangle2D.Double(x, y, width, height);
         }
     }
 }

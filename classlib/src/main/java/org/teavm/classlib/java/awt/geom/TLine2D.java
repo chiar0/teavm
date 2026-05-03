@@ -15,9 +15,11 @@
  */
 package org.teavm.classlib.java.awt.geom;
 
+import org.teavm.classlib.java.awt.TShape;
+
 public abstract class TLine2D {
 
-    public static class Double extends TLine2D {
+    public static class Double extends TLine2D implements TShape {
         public double x1;
         public double y1;
         public double x2;
@@ -47,6 +49,15 @@ public abstract class TLine2D {
 
         public double getY2() {
             return y2;
+        }
+
+        @Override
+        public TRectangle2D getBounds2D() {
+            double minX = Math.min(x1, x2);
+            double minY = Math.min(y1, y2);
+            double maxX = Math.max(x1, x2);
+            double maxY = Math.max(y1, y2);
+            return new TRectangle2D.Double(minX, minY, maxX - minX, maxY - minY);
         }
     }
 }

@@ -13,36 +13,32 @@
  *  See the License for the specific language governing permissions and
  *  limitations under the License.
  */
-package org.teavm.classlib.java.awt;
+package org.teavm.classlib.java.awt.image;
 
-public class TDimension {
+public class TKernel {
+    private final int width;
+    private final int height;
+    private final float[] data;
 
-    public int width;
-    public int height;
-
-    public TDimension() {
-    }
-
-    public TDimension(int width, int height) {
+    public TKernel(int width, int height, float[] data) {
         this.width = width;
         this.height = height;
+        this.data = data.clone();
     }
 
-    public double getWidth() {
-        return (double) width;
+    public final int getWidth() {
+        return width;
     }
 
-    public double getHeight() {
-        return (double) height;
+    public final int getHeight() {
+        return height;
     }
 
-    public void setSize(int w, int h) {
-        this.width = w;
-        this.height = h;
-    }
-
-    @Override
-    public String toString() {
-        return "Dimension[" + width + "," + height + "]";
+    public final float[] getKernelData(float[] data) {
+        if (data == null) {
+            data = new float[this.data.length];
+        }
+        System.arraycopy(this.data, 0, data, 0, this.data.length);
+        return data;
     }
 }

@@ -16,6 +16,16 @@
 package org.teavm.classlib.java.awt;
 
 public abstract class TImage {
+    public static final int SCALE_DEFAULT = 1;
+    public static final int SCALE_FAST = 2;
+    public static final int SCALE_SMOOTH = 4;
+    public static final int SCALE_REPLICATE = 8;
+    public static final int SCALE_AREA_AVERAGING = 16;
+
     public abstract int getWidth(Object observer);
     public abstract int getHeight(Object observer);
+
+    public TImage getScaledInstance(int width, int height, int hints) {
+        return this;
+    }
 }

@@ -15,9 +15,11 @@
  */
 package org.teavm.classlib.java.awt.geom;
 
+import org.teavm.classlib.java.awt.TShape;
+
 public abstract class TEllipse2D {
 
-    public static class Double extends TEllipse2D {
+    public static class Double extends TEllipse2D implements TShape {
         public double x;
         public double y;
         public double width;
@@ -47,6 +49,11 @@ public abstract class TEllipse2D {
 
         public double getHeight() {
             return height;
+        }
+
+        @Override
+        public TRectangle2D getBounds2D() {
+            return new TRectangle2D.Double(x, y, width, height);
         }
     }
 }

@@ -19,4 +19,16 @@ import org.teavm.classlib.java.awt.geom.TRectangle2D;
 
 public interface TShape {
     TRectangle2D getBounds2D();
+
+    default boolean contains(double x, double y) {
+        return getBounds2D().contains(x, y);
+    }
+
+    default boolean contains(double x, double y, double w, double h) {
+        return getBounds2D().contains(x, y, w, h);
+    }
+
+    default boolean intersects(double x, double y, double w, double h) {
+        return getBounds2D().intersects(x, y, w, h);
+    }
 }

@@ -15,7 +15,9 @@
  */
 package org.teavm.classlib.java.awt.geom;
 
-public abstract class TRectangle2D implements Cloneable {
+import org.teavm.classlib.java.awt.TShape;
+
+public abstract class TRectangle2D implements TShape, Cloneable {
 
     public abstract double getX();
     public abstract double getY();
@@ -23,6 +25,10 @@ public abstract class TRectangle2D implements Cloneable {
     public abstract double getHeight();
     public abstract boolean isEmpty();
     public abstract void setRect(double x, double y, double w, double h);
+
+    public TRectangle2D getBounds2D() {
+        return this;
+    }
 
     public void setRect(TRectangle2D r) {
         setRect(r.getX(), r.getY(), r.getWidth(), r.getHeight());
