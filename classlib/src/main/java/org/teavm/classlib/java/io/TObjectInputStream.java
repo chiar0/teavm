@@ -50,6 +50,18 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
 
     private static final int HANDLE_BASE = 0x7e0000;
 
+    /** Auto-detected: true when ReflectLink is on the classpath. */
+    private static final boolean REFLECT_LINK_AVAILABLE;
+
+    static {
+        boolean available = false;
+        try {
+            Class.forName("org.teavm.classlib.reflect.ReflectLink");
+            available = true;
+        } catch (Throwable ignored) {}
+        REFLECT_LINK_AVAILABLE = available;
+    }
+
     private final InputStream in;
     /** Maps serialization handle offset to deserialized object (back-references). */
     private final ArrayList<Object> handleList = new ArrayList<>();
@@ -98,6 +110,9 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
 
     /** Cache enum constants: className + "." + constName -> enum value. */
     private final java.util.HashMap<String, Object> enumConstantCache = new java.util.HashMap<>();
+
+    /** Cache enum valueOf Method objects: className -> Method (avoids repeated getMethod reflection). */
+    private final java.util.HashMap<String, java.lang.reflect.Method> enumValueOfCache = new java.util.HashMap<>();
 
     /** Ring buffer of the last N type-code reads (diagnostic on I/O errors). */
     private static final int TRACE_SIZE = 32;
@@ -252,6 +267,37 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
                 + " (expected " + TObjectOutputStream.STREAM_VERSION + ")");
         }
         startTimeMs = System.currentTimeMillis();
+
+        if (REFLECT_LINK_AVAILABLE) {
+            autoInstallReflectLink();
+        }
+    }
+
+    private void autoInstallReflectLink() {
+        try {
+            objectAllocator = clazz -> {
+                org.teavm.classlib.reflect.ReflectLink.AllocResult r =
+                    org.teavm.classlib.reflect.ReflectLink.allocateWithReason(clazz);
+                return r.obj;
+            };
+
+            fieldWriter = (obj, fieldName, value, schemaTypeDescriptor) ->
+                org.teavm.classlib.reflect.ReflectLink.setField(obj, fieldName, value, schemaTypeDescriptor);
+
+            arrayAllocator = new ArrayAllocator() {
+                @Override
+                public Object[] allocate(String className, int length) {
+                    return org.teavm.classlib.reflect.ReflectLink.allocateObjectArray(className, length);
+                }
+
+                @Override
+                public void setSafe(Object[] arr, int index, Object value) {
+                    org.teavm.classlib.reflect.ReflectLink.arraySetSafe(arr, index, value);
+                }
+            };
+        } catch (Throwable ignored) {
+            // ReflectLink not available — use defaults
+        }
     }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -1200,19 +1246,34 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
         }
 
         if (enumClass != null && enumClass.isEnum()) {
+            String classKey = enumClass.getName();
             try {
-                java.lang.reflect.Method valueOf = enumClass.getMethod("valueOf", Class.class, String.class);
-                Object v = valueOf.invoke(null, enumClass, constName);
-                enumConstantCache.put(cacheKey, v);
-                register(v);
-                return v;
-            } catch (Throwable t) {
-                try {
-                    java.lang.reflect.Method valueOf = enumClass.getMethod("valueOf", String.class);
-                    Object v = valueOf.invoke(null, constName);
+                // Use cached valueOf(Class,String) Method if available
+                java.lang.reflect.Method valueOf = enumValueOfCache.get(classKey);
+                if (valueOf == null && !enumValueOfCache.containsKey(classKey)) {
+                    valueOf = enumClass.getMethod("valueOf", Class.class, String.class);
+                    enumValueOfCache.put(classKey, valueOf);
+                }
+                if (valueOf != null) {
+                    Object v = valueOf.invoke(null, enumClass, constName);
                     enumConstantCache.put(cacheKey, v);
                     register(v);
                     return v;
+                }
+            } catch (Throwable t) {
+                try {
+                    // Use cached valueOf(String) Method if available
+                    java.lang.reflect.Method valueOf1 = enumValueOfCache.get(classKey + "#1");
+                    if (valueOf1 == null && !enumValueOfCache.containsKey(classKey + "#1")) {
+                        valueOf1 = enumClass.getMethod("valueOf", String.class);
+                        enumValueOfCache.put(classKey + "#1", valueOf1);
+                    }
+                    if (valueOf1 != null) {
+                        Object v = valueOf1.invoke(null, constName);
+                        enumConstantCache.put(cacheKey, v);
+                        register(v);
+                        return v;
+                    }
                 } catch (Throwable t2) {
                 }
             }

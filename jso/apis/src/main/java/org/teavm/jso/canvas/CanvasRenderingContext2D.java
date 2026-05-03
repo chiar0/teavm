@@ -15,6 +15,7 @@
  */
 package org.teavm.jso.canvas;
 
+import org.teavm.jso.JSByRef;
 import org.teavm.jso.JSObject;
 import org.teavm.jso.JSProperty;
 import org.teavm.jso.core.JSArray;
@@ -101,6 +102,8 @@ public interface CanvasRenderingContext2D extends JSObject {
     JSArrayReader<JSObject> getLineDash();
 
     void setLineDash(JSArray<JSObject> lineDash);
+
+    void setLineDash(@JSByRef float[] lineDash);
 
     // Image data
 

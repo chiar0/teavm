@@ -229,6 +229,7 @@ public final class ReflectLink {
                     if (debug) System.out.println("[RL] rawNewInstance returned: " + (obj != null));
                     if (obj != null) {
                         ALLOC_STRATEGY_CACHE.put(clazz, 2);
+                        autoInitializeIfNeeded(obj, clazz);
                         return new AllocResult(obj, null, errs);
                     }
                     errs[1] = "rawNewInstance() returned null";
@@ -347,6 +348,43 @@ public final class ReflectLink {
             }
         } catch (Throwable ignored) {}
         return new AllocResult(null, "cached strategy " + strategy + " failed", null);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  Auto-initialization of known-safe collection types after raw allocation
+    // ═══════════════════════════════════════════════════════════════════════
+
+    private static void autoInitializeIfNeeded(Object obj, Class<?> clazz) {
+        try {
+            String cn = clazz.getName();
+            if ("java.util.ArrayList".equals(cn)) {
+                java.lang.reflect.Field f = clazz.getDeclaredField("array");
+                f.setAccessible(true);
+                if (f.get(obj) == null) f.set(obj, new Object[10]);
+            } else if ("java.util.HashMap".equals(cn)) {
+                java.lang.reflect.Field f = clazz.getDeclaredField("elementData");
+                f.setAccessible(true);
+                if (f.get(obj) == null) f.set(obj, new Object[16]);
+            } else if ("java.util.HashSet".equals(cn)) {
+                java.lang.reflect.Field f = clazz.getDeclaredField("backingMap");
+                f.setAccessible(true);
+                if (f.get(obj) == null) f.set(obj, new java.util.HashMap());
+            } else if ("gnu.trove.list.array.TIntArrayList".equals(cn)) {
+                java.lang.reflect.Field f = clazz.getDeclaredField("data");
+                f.setAccessible(true);
+                if (f.get(obj) == null) f.set(obj, new int[10]);
+            } else if ("gnu.trove.list.array.TLongArrayList".equals(cn)) {
+                java.lang.reflect.Field f = clazz.getDeclaredField("data");
+                f.setAccessible(true);
+                if (f.get(obj) == null) f.set(obj, new long[10]);
+            } else if ("gnu.trove.list.array.TFloatArrayList".equals(cn)) {
+                java.lang.reflect.Field f = clazz.getDeclaredField("data");
+                f.setAccessible(true);
+                if (f.get(obj) == null) f.set(obj, new float[10]);
+            }
+        } catch (Throwable ignored) {
+            // Never let auto-init crash allocation
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════════════

@@ -617,7 +617,7 @@ abstract public class TObjectHash<T> extends THash {
      * Called automatically by TeaVM's TObjectInputStream after all
      * fields are restored.
      */
-    private Object readResolve() {
+    public Object readResolve() {
         if (_set != null) {
             int expectedFree = _free;
             Object instA = null, instB = null;
