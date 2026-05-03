@@ -442,9 +442,9 @@ class WasmGCVirtualTableBuilder {
                 if (method.getProgram() == null && !method.hasModifier(ElementModifier.NATIVE)) {
                     continue;
                 }
-                if (!isVirtual.test(method.getReference())) {
-                    continue;
-                }
+                // Interface methods always get vtable entries — the dependency analyzer
+                // may not see all implementations (reflection, serialization), so
+                // devirtualization-based filtering is unsafe for interface dispatch.
                 table.currentImplementors.put(method.getDescriptor(), method.getReference());
                 table.implementorsFromInterfaces.add(method.getDescriptor());
             }
