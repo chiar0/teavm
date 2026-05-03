@@ -434,7 +434,7 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
                     if (frameTop > 0) {
                         frameTop--;
                     }
-                    throw e;
+                    throw new IOException(formatException(e), e);
                 }
             }
         }
@@ -573,8 +573,9 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
             }
         }
 
-        throw new IOException(buildTraceMessage("BADTC:0x"
+        IOException badTc = new IOException(buildTraceMessage("BADTC:0x"
             + Integer.toHexString(tc & 0xFF) + " hc=" + handlerCallCount));
+        throw new IOException(formatException(badTc), badTc);
     }
 
     private Object deliverToFrame(Frame f, Object value) throws IOException {
@@ -721,8 +722,41 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
             }
 
             default:
-                throw new IOException("Unknown frame type: " + f.type);
+                throw new IOException(formatException(
+                    new IOException("Unknown frame type: " + f.type)));
         }
+    }
+
+    // ── Stack-trace formatting ─────────────────────────────────────────────
+
+    /**
+     * Format a throwable with its stack trace (up to 8 frames) and cause
+     * chain into a single human-readable string.  Useful for WASM GC and
+     * other runtimes where the native error message is opaque.
+     */
+    private static String formatException(Throwable t) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(t.getClass().getName()).append(": ").append(t.getMessage());
+        StackTraceElement[] trace = t.getStackTrace();
+        if (trace != null) {
+            int max = Math.min(trace.length, 8);
+            for (int i = 0; i < max; i++) {
+                sb.append("\n  at ").append(trace[i].toString());
+            }
+        }
+        Throwable cause = t.getCause();
+        if (cause != null) {
+            sb.append("\nCaused by: ").append(formatException(cause));
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Public static utility that callers (e.g. LudiiBridge) can use to
+     * format any exception with stack-trace information for diagnostics.
+     */
+    public static String formatThrowable(Throwable t) {
+        return formatException(t);
     }
 
     // ── Diagnostic trace ─────────────────────────────────────────────────────
@@ -789,8 +823,9 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
         int handle = readInt();
         int index = handle - HANDLE_BASE;
         if (index < 0 || index >= handleList.size()) {
-            throw new IOException(buildTraceMessage("Invalid object handle: " + handle
+            IOException badHandle = new IOException(buildTraceMessage("Invalid object handle: " + handle
                 + " (index=" + index + ", registered=" + handleList.size() + ")"));
+            throw new IOException(formatException(badHandle), badHandle);
         }
         return handleList.get(index);
     }
