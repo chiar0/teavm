@@ -25,8 +25,11 @@ import java.util.Objects;
 import java.util.Set;
 import org.teavm.backend.wasm.debug.DebugLines;
 import org.teavm.backend.wasm.generate.DwarfGenerator;
+import org.teavm.backend.wasm.model.WasmArray;
 import org.teavm.backend.wasm.model.WasmBlockType;
 import org.teavm.backend.wasm.model.WasmModule;
+import org.teavm.backend.wasm.model.WasmStructure;
+import org.teavm.backend.wasm.model.WasmType;
 import org.teavm.backend.wasm.model.expression.WasmArrayCopy;
 import org.teavm.backend.wasm.model.expression.WasmArrayGet;
 import org.teavm.backend.wasm.model.expression.WasmArrayLength;
@@ -239,6 +242,40 @@ class WasmBinaryRenderingVisitor implements WasmExpressionVisitor {
     @Override
     public void visit(WasmCastBranch expression) {
         pushLocation(expression);
+        // Check for disjoint type hierarchies (struct vs array) that would cause
+        // br_on_cast validation failure in WASM GC. When source and target are in
+        // different hierarchies, the cast can never succeed -- emit drop + ref.null.
+        var src = expression.getSourceType();
+        var tgt = expression.getType();
+        boolean srcIsArray = src instanceof WasmType.SpecialReference
+                && ((WasmType.SpecialReference) src).kind == WasmType.SpecialReferenceKind.ARRAY
+                || src instanceof WasmType.CompositeReference
+                && ((WasmType.CompositeReference) src).composite instanceof WasmArray;
+        boolean tgtIsArray = tgt instanceof WasmType.SpecialReference
+                && ((WasmType.SpecialReference) tgt).kind == WasmType.SpecialReferenceKind.ARRAY
+                || tgt instanceof WasmType.CompositeReference
+                && ((WasmType.CompositeReference) tgt).composite instanceof WasmArray;
+        boolean srcIsStruct = src instanceof WasmType.SpecialReference
+                && ((WasmType.SpecialReference) src).kind == WasmType.SpecialReferenceKind.STRUCT
+                || src instanceof WasmType.CompositeReference
+                && ((WasmType.CompositeReference) src).composite instanceof WasmStructure;
+        boolean tgtIsStruct = tgt instanceof WasmType.SpecialReference
+                && ((WasmType.SpecialReference) tgt).kind == WasmType.SpecialReferenceKind.STRUCT
+                || tgt instanceof WasmType.CompositeReference
+                && ((WasmType.CompositeReference) tgt).composite instanceof WasmStructure;
+        if ((srcIsArray && tgtIsStruct) || (srcIsStruct && tgtIsArray)) {
+            // Disjoint types -- emit: value (drop) ref.null target
+            // This matches the "cast failed" path (br_on_cast falls through)
+            if (expression.getResult() != null) {
+                expression.getResult().acceptVisitor(this);
+            }
+            expression.getValue().acceptVisitor(this);
+            writer.writeByte(0x1A); // drop
+            writer.writeByte(0xD0); // ref.null
+            writer.writeHeapType(tgt, module);
+            popLocation();
+            return;
+        }
         if (expression.getResult() != null) {
             expression.getResult().acceptVisitor(this);
         }

@@ -619,6 +619,23 @@ public class WasmGCGenerationVisitor extends BaseWasmGenerationVisitor {
             }
         }
 
+        // In WASM GC, arrayref and structref are disjoint type hierarchies.
+        // If the source is an array type and the target is a struct (or vice versa),
+        // the cast can never succeed. Replace with null / throw CCE.
+        if (isArrayRef(sourceType) != isArrayRef(targetType)) {
+            var block = new WasmBlock(false);
+            var nullableTarget = targetType instanceof WasmType.CompositeReference
+                    && !targetType.isNullable()
+                    ? ((WasmType.CompositeReference) targetType).composite.getReference()
+                    : targetType;
+            block.setType(nullableTarget.asBlock());
+            block.setLocation(expr.getLocation());
+            block.getBody().add(new WasmDrop(result));
+            block.getBody().add(new WasmNullConstant(nullableTarget));
+            result = block;
+            return;
+        }
+
         // Force sourceType to nullable for br_on_cast type compatibility.
         // br_on_cast requires target ⊑ source; if target is nullable,
         // source must also be nullable (nullable is supertype of non-nullable).
@@ -777,19 +794,36 @@ public class WasmGCGenerationVisitor extends BaseWasmGenerationVisitor {
                 if (!isExtern(wasmTargetType)) {
                     result.acceptVisitor(typeInference);
                     var sourceType = (WasmType.Reference) typeInference.getSingleResult();
-                    if (!sourceType.isNullable()) {
-                        if (sourceType instanceof WasmType.CompositeReference) {
-                            sourceType = ((WasmType.CompositeReference) sourceType).composite.getReference();
+                    // Skip cast if source and target are in disjoint WASM GC type hierarchies
+                    // (array vs struct). The cast can never succeed.
+                    if (isArrayRef(sourceType) != isArrayRef(wasmTargetType)) {
+                        // Element is an array ref but target is struct, or vice versa.
+                        // Drop the element and return null for the target type.
+                        var check = new WasmBlock(false);
+                        var nullableTarget = wasmTargetType instanceof WasmType.CompositeReference
+                                && !wasmTargetType.isNullable()
+                                ? ((WasmType.CompositeReference) wasmTargetType).composite.getReference()
+                                : wasmTargetType;
+                        check.setType(nullableTarget.asBlock());
+                        check.setLocation(expr.getLocation());
+                        check.getBody().add(new WasmDrop(result));
+                        check.getBody().add(new WasmNullConstant(nullableTarget));
+                        result = check;
+                    } else {
+                        if (!sourceType.isNullable()) {
+                            if (sourceType instanceof WasmType.CompositeReference) {
+                                sourceType = ((WasmType.CompositeReference) sourceType).composite.getReference();
+                            }
                         }
+                        var check = new WasmBlock(false);
+                        check.setType(wasmTargetType.asBlock());
+                        check.setLocation(expr.getLocation());
+                        check.getBody().add(new WasmCastBranch(WasmCastCondition.SUCCESS, result, sourceType,
+                                wasmTargetType, check));
+                        check.getBody().add(new WasmDrop(new WasmPop(sourceType)));
+                        check.getBody().add(new WasmNullConstant(wasmTargetType));
+                        result = check;
                     }
-                    var check = new WasmBlock(false);
-                    check.setType(wasmTargetType.asBlock());
-                    check.setLocation(expr.getLocation());
-                    check.getBody().add(new WasmCastBranch(WasmCastCondition.SUCCESS, result, sourceType,
-                            wasmTargetType, check));
-                    check.getBody().add(new WasmDrop(new WasmPop(sourceType)));
-                    check.getBody().add(new WasmNullConstant(wasmTargetType));
-                    result = check;
                 }
             }
         }
@@ -800,6 +834,22 @@ public class WasmGCGenerationVisitor extends BaseWasmGenerationVisitor {
             return false;
         }
         return ((WasmType.SpecialReference) type).kind == WasmType.SpecialReferenceKind.EXTERN;
+    }
+
+    /**
+     * Returns true if the type is in the WASM GC array hierarchy:
+     * arrayref (0x6A), or a (ref null/to array_composite_type).
+     * In WASM GC, arrayref and structref are disjoint — a value of one
+     * can never be cast to the other.
+     */
+    private boolean isArrayRef(WasmType.Reference type) {
+        if (type instanceof WasmType.SpecialReference) {
+            return ((WasmType.SpecialReference) type).kind == WasmType.SpecialReferenceKind.ARRAY;
+        }
+        if (type instanceof WasmType.CompositeReference) {
+            return ((WasmType.CompositeReference) type).composite instanceof WasmArray;
+        }
+        return false;
     }
 
     @Override
