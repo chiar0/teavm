@@ -105,5 +105,7 @@ public interface BuildStrategy {
 
     void setEmitOnErrors(boolean emitOnErrors);
 
+    void setCompactMode(boolean compactMode);
+
     BuildResult build() throws BuildException;
 }

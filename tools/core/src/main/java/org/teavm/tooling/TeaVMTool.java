@@ -125,6 +125,7 @@ public class TeaVMTool {
     private boolean shortFileNames;
     private boolean assertionsRemoved;
     private boolean emitOnErrors;
+    private boolean compactMode;
     private String[] reflectionPackages;
     private SourceMapBuilder wasmSourceMapWriter;
 
@@ -327,6 +328,10 @@ public class TeaVMTool {
         this.emitOnErrors = emitOnErrors;
     }
 
+    public void setCompactMode(boolean compactMode) {
+        this.compactMode = compactMode;
+    }
+
     public void setProgressListener(TeaVMProgressListener progressListener) {
         this.progressListener = progressListener;
     }
@@ -405,6 +410,7 @@ public class TeaVMTool {
             target.setSourceMapLocation(getResolvedTargetFileName() + ".map");
         }
         target.setReflectionPackages(reflectionPackages);
+        target.setCompactMode(compactMode);
         return target;
     }
 

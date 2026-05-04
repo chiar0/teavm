@@ -61,5 +61,6 @@ public class RemoteBuildRequest implements Serializable {
     public boolean shortFileNames;
     public boolean assertionsRemoved;
     public boolean emitOnErrors;
+    public boolean compactMode;
     public String[] reflectionPackages;
 }

@@ -79,6 +79,7 @@ public class InProcessBuildStrategy implements BuildStrategy {
     private boolean assertionsRemoved;
     private String[] reflectionPackages;
     private boolean emitOnErrors;
+    private boolean compactMode;
 
     @Override
     public void init() {
@@ -278,6 +279,11 @@ public class InProcessBuildStrategy implements BuildStrategy {
     }
 
     @Override
+    public void setCompactMode(boolean compactMode) {
+        this.compactMode = compactMode;
+    }
+
+    @Override
     public BuildResult build() throws BuildException {
         TeaVMTool tool = new TeaVMTool();
         tool.setProgressListener(progressListener);
@@ -316,6 +322,7 @@ public class InProcessBuildStrategy implements BuildStrategy {
         tool.setShortFileNames(shortFileNames);
         tool.setAssertionsRemoved(assertionsRemoved);
         tool.setEmitOnErrors(emitOnErrors);
+        tool.setCompactMode(compactMode);
         tool.setReflectionPackages(reflectionPackages);
 
         tool.getProperties().putAll(properties);

@@ -240,6 +240,11 @@ public class RemoteBuildStrategy implements BuildStrategy {
     }
 
     @Override
+    public void setCompactMode(boolean compactMode) {
+        request.compactMode = compactMode;
+    }
+
+    @Override
     public void setReflectionPackages(String[] reflectionPackages) {
         request.reflectionPackages = reflectionPackages != null ? reflectionPackages.clone() : null;
     }

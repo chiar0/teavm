@@ -173,6 +173,7 @@ public class BuildDaemon extends UnicastRemoteObject implements RemoteBuildServi
         tool.setShortFileNames(request.shortFileNames);
         tool.setAssertionsRemoved(request.assertionsRemoved);
         tool.setEmitOnErrors(request.emitOnErrors);
+        tool.setCompactMode(request.compactMode);
         tool.setReflectionPackages(request.reflectionPackages);
 
         for (String sourceDirectory : request.sourceDirectories) {

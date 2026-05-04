@@ -189,6 +189,9 @@ public class TeaVMCompileMojo extends AbstractMojo {
     @Parameter(property = "teavm.assertionsRemoved", defaultValue = "false")
     private boolean assertionsRemoved;
 
+    @Parameter(property = "teavm.compactMode", defaultValue = "true")
+    private boolean compactMode = true;
+
     private void setupBuilder(BuildStrategy builder) throws MojoExecutionException {
         builder.setLog(new MavenTeaVMToolLog(getLog()));
         try {
@@ -221,6 +224,7 @@ public class TeaVMCompileMojo extends AbstractMojo {
             builder.setSharedBuffer(sharedBuffer);
             builder.setShortFileNames(shortFileNames);
             builder.setAssertionsRemoved(assertionsRemoved);
+            builder.setCompactMode(compactMode);
             builder.setEmitOnErrors(emitOnErrors);
             builder.setReflectionPackages(reflectionPackages);
 
