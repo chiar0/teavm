@@ -90,16 +90,27 @@ public class WasmGCVirtualCallGenerator {
         var invoke = new WasmCallReference(functionRef, (WasmFunctionType) functionTypeRef.composite);
         invoke.setSuspensionPoint(suspending);
         WasmExpression instanceRef = new WasmGetLocal(instance);
-        var instanceType = (WasmType.CompositeReference) instance.getType();
-        var instanceStruct = (WasmStructure) instanceType.composite;
+        var instanceType = instance.getType();
         var expectedInstanceClassStruct = dispatchClassInfo.getStructure();
-        if (!expectedInstanceClassStruct.isSupertypeOf(instanceStruct)) {
+        boolean needsCast = false;
+        if (instanceType instanceof WasmType.CompositeReference) {
+            var instanceStruct = (WasmStructure) ((WasmType.CompositeReference) instanceType).composite;
+            needsCast = !expectedInstanceClassStruct.isSupertypeOf(instanceStruct);
+        } else if (instanceType instanceof WasmType.SpecialReference) {
+            // In compact mode, the instance local is typed as anyref/structref.
+            // Always need a narrowing cast to the dispatch VT's struct type.
+            needsCast = true;
+        }
+        if (needsCast) {
+            var sourceRef = instanceType instanceof WasmType.CompositeReference
+                    ? (WasmType.Reference) instanceType
+                    : WasmType.STRUCT;
             var check = new WasmBlock(false);
             var targetType = expectedInstanceClassStruct.getNonNullReference();
             check.setType(targetType.asBlock());
-            check.getBody().add(new WasmCastBranch(WasmCastCondition.SUCCESS, instanceRef, instanceType,
+            check.getBody().add(new WasmCastBranch(WasmCastCondition.SUCCESS, instanceRef, sourceRef,
                     targetType, check));
-            check.getBody().add(new WasmDrop(new WasmPop(instanceType)));
+            check.getBody().add(new WasmDrop(new WasmPop(sourceRef)));
             check.getBody().add(new WasmUnreachable());
             instanceRef = check;
         }

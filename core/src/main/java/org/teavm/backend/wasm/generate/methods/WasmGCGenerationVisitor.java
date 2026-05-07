@@ -911,12 +911,32 @@ public class WasmGCGenerationVisitor extends BaseWasmGenerationVisitor {
 
     @Override
     protected WasmExpression forceType(WasmExpression expression, ValueType type) {
-        return forceType(expression, mapType(currentMethod.getReturnType()));
+        return forceType(expression, mapType(type));
     }
 
     private WasmExpression forceType(WasmExpression expression, WasmType expectedType) {
         expression.acceptVisitor(typeInference);
         var actualType = typeInference.getSingleResult();
+
+        // Handle compact mode: actual type is anyref/structref (SpecialReference)
+        // but expected type is a specific struct (CompositeReference).
+        if (actualType instanceof WasmType.SpecialReference
+                && expectedType instanceof WasmType.CompositeReference) {
+            var expectedComposite = ((WasmType.CompositeReference) expectedType).composite;
+            if (expectedComposite instanceof WasmStructure) {
+                var sourceType = (WasmType.Reference) actualType;
+                var targetType = expectedComposite.getReference();
+                var check = new WasmBlock(false);
+                check.setType(targetType.asBlock());
+                check.setLocation(expression.getLocation());
+                check.getBody().add(new WasmCastBranch(WasmCastCondition.SUCCESS, expression,
+                        sourceType, targetType, check));
+                check.getBody().add(new WasmDrop(new WasmPop(sourceType)));
+                check.getBody().add(new WasmNullConstant(targetType));
+                return check;
+            }
+        }
+
         if (actualType == expectedType || !(actualType instanceof WasmType.CompositeReference)
                 || !(expectedType instanceof WasmType.CompositeReference)) {
             return expression;

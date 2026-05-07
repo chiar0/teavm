@@ -212,7 +212,13 @@ class WasmBinaryRenderingVisitor implements WasmExpressionVisitor {
     public void visit(WasmBranch expression) {
         pushLocation(expression);
         if (expression.getResult() != null) {
+            var needsNarrowing = needsTypeNarrowing(expression.getResult(), expression.getTarget());
             expression.getResult().acceptVisitor(this);
+            if (needsNarrowing != null) {
+                writer.writeByte(0xFB);
+                writer.writeByte(needsNarrowing.isNullable() ? 23 : 22);
+                writer.writeHeapType(needsNarrowing, module);
+            }
         }
         expression.getCondition().acceptVisitor(this);
         writer.writeByte(0x0D);
@@ -224,7 +230,13 @@ class WasmBinaryRenderingVisitor implements WasmExpressionVisitor {
     public void visit(WasmNullBranch expression) {
         pushLocation(expression);
         if (expression.getResult() != null) {
+            var needsNarrowing = needsTypeNarrowing(expression.getResult(), expression.getTarget());
             expression.getResult().acceptVisitor(this);
+            if (needsNarrowing != null) {
+                writer.writeByte(0xFB);
+                writer.writeByte(needsNarrowing.isNullable() ? 23 : 22);
+                writer.writeHeapType(needsNarrowing, module);
+            }
         }
         expression.getValue().acceptVisitor(this);
         switch (expression.getCondition()) {
@@ -307,11 +319,72 @@ class WasmBinaryRenderingVisitor implements WasmExpressionVisitor {
     public void visit(WasmBreak expression) {
         pushLocation(expression);
         if (expression.getResult() != null) {
+            var needsNarrowing = needsTypeNarrowing(expression.getResult(), expression.getTarget());
             expression.getResult().acceptVisitor(this);
+            if (needsNarrowing != null) {
+                writer.writeByte(0xFB);
+                writer.writeByte(needsNarrowing.isNullable() ? 23 : 22);
+                writer.writeHeapType(needsNarrowing, module);
+            }
         }
         writer.writeByte(0x0C);
         writeLabel(expression.getTarget());
         popLocation();
+    }
+
+    private WasmType.Reference needsTypeNarrowing(WasmExpression result, WasmBlock target) {
+        // Check if the result expression's type is a wide reference (anyref, eqref, etc.)
+        // but the target block expects a specific reference type. If so, we need to
+        // insert a ref.cast to narrow the type before the branch instruction.
+        var blockType = target.getType();
+        WasmType outputType;
+        if (blockType instanceof WasmBlockType.Value) {
+            outputType = ((WasmBlockType.Value) blockType).type;
+        } else if (blockType instanceof WasmBlockType.Function) {
+            var outputs = blockType.getOutputTypes();
+            if (outputs.size() != 1) {
+                return null;
+            }
+            outputType = outputs.get(0);
+        } else {
+            return null;
+        }
+        if (!(outputType instanceof WasmType.CompositeReference)) {
+            return null;
+        }
+        // Check result expression type
+        if (result instanceof WasmGetLocal) {
+            var localType = ((WasmGetLocal) result).getLocal().getType();
+            if (isWideRef(localType)) {
+                return (WasmType.Reference) outputType;
+            }
+        } else if (result instanceof WasmCast) {
+            // Cast already narrows type, check if target matches
+            return null;
+        } else if (result instanceof WasmBlock) {
+            // Block result — check block's output type
+            var innerType = ((WasmBlock) result).getType();
+            if (innerType instanceof WasmBlockType.Value) {
+                var innerOut = ((WasmBlockType.Value) innerType).type;
+                if (isWideRef(innerOut)) {
+                    return (WasmType.Reference) outputType;
+                }
+            }
+        }
+        return null;
+    }
+
+    private boolean isWideRef(WasmType type) {
+        if (!(type instanceof WasmType.SpecialReference)) {
+            return false;
+        }
+        var kind = ((WasmType.SpecialReference) type).kind;
+        return kind == WasmType.SpecialReferenceKind.ANY
+                || kind == WasmType.SpecialReferenceKind.EQ
+                || kind == WasmType.SpecialReferenceKind.STRUCT
+                || kind == WasmType.SpecialReferenceKind.ARRAY
+                || kind == WasmType.SpecialReferenceKind.EXTERN
+                || kind == WasmType.SpecialReferenceKind.FUNC;
     }
 
     @Override
