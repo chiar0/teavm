@@ -830,15 +830,21 @@ public final class ReflectLink {
 
     /**
      * Recomputes the {@code wordsInUse} counter on a freshly-deserialized
-     * ChunkSet. Ludii relies on this counter for correctness, but it is
-     * derived state that we don't serialise directly. Field references are
-     * resolved once and cached.  This method is safe to call when
-     * ChunkSet is not on the classpath — it will simply return.
+     * ChunkSet. Tries the public {@code recomputeWordsInUse()} method first,
+     * then falls back to direct field reflection.
      */
     public static void repairChunkSetWordsInUse(Object obj) {
         try {
             Class<?> chunkSetClass = Class.forName("main.collections.ChunkSet");
             if (!chunkSetClass.isInstance(obj)) return;
+            // Prefer public method (available in ludii >= 1.3.15)
+            try {
+                java.lang.reflect.Method m = chunkSetClass.getMethod("recomputeWordsInUse");
+                m.invoke(obj);
+                return;
+            } catch (NoSuchMethodException e) {
+                // Fall through to reflection
+            }
         } catch (ClassNotFoundException | NoClassDefFoundError e) {
             // ChunkSet not on classpath — skip
             return;
