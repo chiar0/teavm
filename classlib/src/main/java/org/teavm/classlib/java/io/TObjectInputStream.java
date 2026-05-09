@@ -275,24 +275,39 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
 
     private void autoInstallReflectLink() {
         try {
+            Class<?> rlClass = Class.forName("org.teavm.classlib.reflect.ReflectLink");
+            Class<?> allocResultClass = Class.forName("org.teavm.classlib.reflect.ReflectLink$AllocResult");
+            java.lang.reflect.Method allocMethod = rlClass.getMethod("allocateWithReason", Class.class);
+            java.lang.reflect.Field objField = allocResultClass.getField("obj");
+            java.lang.reflect.Method setFieldMethod = rlClass.getMethod("setField",
+                Object.class, String.class, Object.class, String.class);
+            java.lang.reflect.Method allocArrayMethod = rlClass.getMethod("allocateObjectArray",
+                String.class, int.class);
+            java.lang.reflect.Method arraySetSafeMethod = rlClass.getMethod("arraySetSafe",
+                Object[].class, int.class, Object.class);
+
             objectAllocator = clazz -> {
-                org.teavm.classlib.reflect.ReflectLink.AllocResult r =
-                    org.teavm.classlib.reflect.ReflectLink.allocateWithReason(clazz);
-                return r.obj;
+                try {
+                    Object result = allocMethod.invoke(null, clazz);
+                    return objField.get(result);
+                } catch (Throwable t) { return null; }
             };
 
-            fieldWriter = (obj, fieldName, value, schemaTypeDescriptor) ->
-                org.teavm.classlib.reflect.ReflectLink.setField(obj, fieldName, value, schemaTypeDescriptor);
+            fieldWriter = (obj, fieldName, value, schemaTypeDescriptor) -> {
+                setFieldMethod.invoke(null, obj, fieldName, value, schemaTypeDescriptor);
+            };
 
             arrayAllocator = new ArrayAllocator() {
                 @Override
                 public Object[] allocate(String className, int length) {
-                    return org.teavm.classlib.reflect.ReflectLink.allocateObjectArray(className, length);
+                    try { return (Object[]) allocArrayMethod.invoke(null, className, length); }
+                    catch (Throwable t) { return null; }
                 }
 
                 @Override
                 public void setSafe(Object[] arr, int index, Object value) {
-                    org.teavm.classlib.reflect.ReflectLink.arraySetSafe(arr, index, value);
+                    try { arraySetSafeMethod.invoke(null, arr, index, value); }
+                    catch (Throwable t) { arr[index] = value; }
                 }
             };
         } catch (Throwable ignored) {
@@ -364,15 +379,21 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
         static final int MAP_ENTRIES   = 4;
         static final int SET_ELEMENTS  = 5;
         static final int DRAIN         = 8;
+        static final int STD_FIELDS    = 9; // Standard format: read fields in descriptor order
 
         int type;
         Object container;
         int remaining;
 
-        // OBJECT_FIELDS / LIST_ELEMENTS:
+        // OBJECT_FIELDS / STD_FIELDS / LIST_ELEMENTS:
         String className;
         String nextFieldName;
         ClassSchema schema;
+
+        // STD_FIELDS: class descriptor hierarchy for field ordering
+        ClassDescInfo[] fieldHierarchy;
+        int[] fieldClassStartIdx; // index into allFields for each class in hierarchy
+        int totalFieldIndex; // current field index across all hierarchy classes
 
         // MAP_ENTRIES:
         Object pendingKey;
@@ -405,6 +426,9 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
 
     /** Sentinel returned from {@link #readLeafOrStartContainer()} when a frame was pushed. */
     private static final Object NEEDS_CHILDREN = new Object();
+
+    /** Sentinel returned when TC_ENDBLOCKDATA is read at top level. */
+    private static final Object END_BLOCK = new Object();
 
     // ═════════════════════════════════════════════════════════════════════════
     //  readObject -- pure iteration, zero recursion
@@ -479,8 +503,8 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
             } catch (Throwable ignored) {}
         }
         int tc = readByte();
-        if (SerializationDiagnostics.isDebug() && totalObjects < 3) {
-            System.out.println("[TIS] readLeafOrStartContainer tc=0x" + Integer.toHexString(tc) + " total=" + totalObjects + " avail=" + in.available());
+        if (totalObjects < 5) {
+            System.out.println("[TIS] readLeafOrStartContainer tc=0x" + Integer.toHexString(tc & 0xFF) + " total=" + totalObjects + " frameTop=" + frameTop + " pos=" + position);
         }
         recordTrace(tc);
         chunkCounter++;  // Count every operation toward the chunk budget
@@ -490,75 +514,31 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
             case TC_REFERENCE:
                 return readReference();
             case TC_STRING: {
+                // TC_STRING: handle + UTF data
                 String v = readUTF();
                 register(v);
                 return v;
             }
-            case TC_LONGSTRING: {
-                int len = readInt();
-                byte[] bytes = new byte[len];
-                readFully(bytes);
-                String v = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
-                register(v);
-                return v;
-            }
-            case TC_INTEGER: {
-                Integer v = readInt();
-                register(v);
-                return v;
-            }
-            case TC_LONG: {
-                Long v = readLong();
-                register(v);
-                return v;
-            }
-            case TC_DOUBLE: {
-                Double v = readDouble();
-                register(v);
-                return v;
-            }
-            case TC_FLOAT: {
-                Float v = readFloat();
-                register(v);
-                return v;
-            }
-            case TC_BOOLEAN: {
-                Boolean v = readByte() != 0;
-                register(v);
-                return v;
-            }
-            case TC_SHORT: {
-                Short v = (short) readShort();
-                register(v);
-                return v;
-            }
-            case TC_CHAR: {
-                Character v = (char) readChar();
-                register(v);
-                return v;
-            }
-            case TC_BYTE: {
-                Byte v = (byte) readByte();
-                register(v);
-                return v;
-            }
             case TC_ENUM:
-                return readEnum();
+                return readStdEnum();
             case TC_ARRAY:
-                return startArray();
-            case TC_LIST:
-                return startList();
-            case TC_MAP:
-                return startMap();
-            case TC_SET:
-                return startSet();
+                return readStdArray();
             case TC_OBJECT:
-                return startCustomObject();
-            case TC_BITSET:
-                return readBitSet();
-            case TC_SCHEMA:
-                readSchemaInline();
+                return readStdObject();
+            case TC_CLASS: {
+                // TC_CLASS: classDesc + assign handle
+                readClassDesc();
+                return null; // Class objects not fully supported
+            }
+            case TC_BLOCKDATA:
+            case TC_BLOCKDATALONG: {
+                // Skip block data (for SC_WRITE_METHOD/SC_EXTERNALIZABLE)
+                skipBlockData(tc);
                 return readLeafOrStartContainer();
+            }
+            case TC_ENDBLOCKDATA:
+                // Should not be read at top level; signal to caller
+                return END_BLOCK;
             default:
                 break;
         }
@@ -578,20 +558,12 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
         throw new IOException(formatException(badTc), badTc);
     }
 
-    private Object deliverToFrame(Frame f, Object value) throws IOException {
+    private Object deliverToFrame(Frame f, Object value) throws IOException, ClassNotFoundException {
         switch (f.type) {
             case Frame.OBJECT_FIELDS: {
-                String typeDesc = null;
-                if (f.schema != null) {
-                    // Use position-based lookup to handle shadowed fields
-                    // (e.g. Seq.moves + Moves.moves both named "moves").
-                    int fieldIdx = f.schema.fieldNames.length - f.remaining;
-                    if (fieldIdx >= 0 && fieldIdx < f.schema.fieldTypeDescriptors.length) {
-                        typeDesc = f.schema.fieldTypeDescriptors[fieldIdx];
-                    }
-                }
+                // Legacy format: field name was stored in nextFieldName
                 try {
-                    setFieldSafely(f.container, f.nextFieldName, value, typeDesc);
+                    setFieldSafely(f.container, f.nextFieldName, value, null);
                 } catch (Exception e) {
                     if (listener != null) {
                         listener.onError("setField", f.className, e);
@@ -599,19 +571,6 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
                 }
                 f.remaining--;
                 if (f.remaining > 0) {
-                    f.nextFieldName = readUTF();
-                    if (f.schema != null) {
-                        int fieldIdx = f.schema.fieldNames.length - f.remaining;
-                        if (fieldIdx >= 0 && fieldIdx < f.schema.fieldNames.length
-                                && !f.nextFieldName.equals(f.schema.fieldNames[fieldIdx])) {
-                            if (listener != null) {
-                                listener.onSchemaDrift(f.className,
-                                    "field[" + fieldIdx + "]: expected "
-                                    + f.schema.fieldNames[fieldIdx]
-                                    + ", got " + f.nextFieldName);
-                            }
-                        }
-                    }
                     return NEEDS_CHILDREN;
                 }
                 frameTop--;
@@ -619,6 +578,25 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
                     postDeserializeCallback.onObjectDeserialized(f.container);
                 }
                 return resolveObject(f.container);
+            }
+
+            case Frame.STD_FIELDS: {
+                // Standard format: deliver object field value, then continue
+                if ("game.Game".equals(f.className) && f.totalFieldIndex < 8) {
+                    System.out.println("[TIS-FIELD] obj field[" + f.totalFieldIndex + "] "
+                        + f.nextFieldName + " val=" + (value != null ? value.getClass().getName() : "null"));
+                }
+                try {
+                    setFieldSafely(f.container, f.nextFieldName, value, null);
+                } catch (Exception e) {
+                    if (listener != null) {
+                        listener.onError("setField", f.className, e);
+                    }
+                }
+                f.totalFieldIndex++;
+                f.remaining--;
+                // Continue processing remaining fields (may be more primitives)
+                return processStdFieldsFrame();
             }
 
             case Frame.OBJECT_ARRAY: {
@@ -1387,6 +1365,11 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
                 fieldWriter.setField(obj, fieldName, value, schemaTypeDescriptor);
                 return;
             } catch (Exception e) {
+                if (totalObjects < 10) {
+                    System.out.println("[TIS-SETFIELD] fieldWriter FAILED: " + obj.getClass().getName()
+                        + "." + fieldName + " = " + (value != null ? value.getClass().getName() : "null")
+                        + " err=" + e.getMessage());
+                }
                 if (listener != null) {
                     listener.onError("setField", obj.getClass().getName(), e);
                 }
@@ -1765,28 +1748,750 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
         // No-op: field traversal is handled by the iterative read loop
     }
 
-    // ── Type codes (mirror TObjectOutputStream) ──────────────────────────────
+    // ── Type codes (standard Java Object Serialization) ──────────────────────
 
-    private static final byte TC_NULL      = TObjectOutputStream.TC_NULL;
-    private static final byte TC_REFERENCE = TObjectOutputStream.TC_REFERENCE;
-    private static final byte TC_STRING    = TObjectOutputStream.TC_STRING;
-    private static final byte TC_ARRAY     = TObjectOutputStream.TC_ARRAY;
-    private static final byte TC_OBJECT    = TObjectOutputStream.TC_OBJECT;
+    private static final byte TC_NULL          = TObjectOutputStream.TC_NULL;
+    private static final byte TC_REFERENCE     = TObjectOutputStream.TC_REFERENCE;
+    private static final byte TC_CLASSDESC     = TObjectOutputStream.TC_CLASSDESC;
+    private static final byte TC_OBJECT        = TObjectOutputStream.TC_OBJECT;
+    private static final byte TC_STRING        = TObjectOutputStream.TC_STRING;
+    private static final byte TC_ARRAY         = TObjectOutputStream.TC_ARRAY;
+    private static final byte TC_CLASS         = TObjectOutputStream.TC_CLASS;
+    private static final byte TC_BLOCKDATA     = TObjectOutputStream.TC_BLOCKDATA;
+    private static final byte TC_ENDBLOCKDATA  = TObjectOutputStream.TC_ENDBLOCKDATA;
+    private static final byte TC_ENUM          = TObjectOutputStream.TC_ENUM;
+    private static final byte TC_BLOCKDATALONG = TObjectOutputStream.TC_BLOCKDATALONG;
+
+    // Class descriptor flags (mirror TObjectOutputStream)
+    private static final byte SC_SERIALIZABLE    = TObjectOutputStream.SC_SERIALIZABLE;
+    private static final byte SC_WRITE_METHOD    = TObjectOutputStream.SC_WRITE_METHOD;
+    private static final byte SC_EXTERNALIZABLE  = TObjectOutputStream.SC_EXTERNALIZABLE;
+    private static final byte SC_BLOCK_DATA      = TObjectOutputStream.SC_BLOCK_DATA;
+    private static final byte SC_ENUM            = TObjectOutputStream.SC_ENUM;
+
+    // Legacy type codes (for backward compat if encountering old-format streams)
+    private static final byte TC_LIST      = TObjectOutputStream.TC_LIST;
+    private static final byte TC_MAP       = TObjectOutputStream.TC_MAP;
+    private static final byte TC_SET       = TObjectOutputStream.TC_SET;
+    private static final byte TC_BITSET    = TObjectOutputStream.TC_BITSET;
+    private static final byte TC_SCHEMA    = TObjectOutputStream.TC_SCHEMA;
+    private static final byte TC_LONGSTRING = 0x62;
     private static final byte TC_INTEGER   = TObjectOutputStream.TC_INTEGER;
     private static final byte TC_LONG      = TObjectOutputStream.TC_LONG;
     private static final byte TC_DOUBLE    = TObjectOutputStream.TC_DOUBLE;
     private static final byte TC_FLOAT     = TObjectOutputStream.TC_FLOAT;
     private static final byte TC_BOOLEAN   = TObjectOutputStream.TC_BOOLEAN;
-    private static final byte TC_LIST      = TObjectOutputStream.TC_LIST;
-    private static final byte TC_MAP       = TObjectOutputStream.TC_MAP;
     private static final byte TC_SHORT     = TObjectOutputStream.TC_SHORT;
     private static final byte TC_CHAR      = TObjectOutputStream.TC_CHAR;
     private static final byte TC_BYTE      = TObjectOutputStream.TC_BYTE;
-    private static final byte TC_ENUM      = TObjectOutputStream.TC_ENUM;
-    private static final byte TC_BITSET    = TObjectOutputStream.TC_BITSET;
-    private static final byte TC_SET       = TObjectOutputStream.TC_SET;
-    private static final byte TC_SCHEMA    = TObjectOutputStream.TC_SCHEMA;
-    private static final byte TC_LONGSTRING = 0x62;
+
+    // ── Class descriptor cache ──────────────────────────────────────────────
+
+    /** Parsed class descriptor from TC_CLASSDESC. */
+    private static final class ClassDescInfo {
+        String className;
+        long suid;
+        byte flags;
+        /** Field names in descriptor order (primitives first, then objects). */
+        String[] fieldNames;
+        /** Field type codes: B,C,D,F,I,J,S,Z for primitives; L,[ for objects. */
+        byte[] fieldTypes;
+        /** For object/array fields (L,[): the type descriptor string. */
+        String[] fieldClassNames;
+        /** Super class descriptor (null if superclass is TC_NULL). */
+        ClassDescInfo superDesc;
+    }
+
+    /** Class descriptor handle → ClassDescInfo. */
+    private final ArrayList<ClassDescInfo> descHandleList = new ArrayList<>();
+
+    /** Read a class descriptor: TC_NULL, TC_REFERENCE, or TC_CLASSDESC. */
+    private ClassDescInfo readClassDesc() throws IOException {
+        int tc = readByte();
+        if (tc == TC_NULL) return null;
+        if (tc == TC_REFERENCE) {
+            int handle = readInt();
+            int idx = handle - HANDLE_BASE;
+            if (idx >= 0 && idx < handleList.size()) {
+                Object obj = handleList.get(idx);
+                if (obj instanceof ClassDescInfo) return (ClassDescInfo) obj;
+            }
+            throw new IOException("Bad class desc reference: 0x" + Integer.toHexString(handle));
+        }
+        if (tc == TC_CLASSDESC) {
+            return readNewClassDesc();
+        }
+        throw new IOException("Expected class desc, got tc=0x" + Integer.toHexString(tc & 0xFF)
+            + " at position " + (position - 1));
+    }
+
+    /** Read a fresh TC_CLASSDESC block. */
+    private ClassDescInfo readNewClassDesc() throws IOException {
+        ClassDescInfo desc = new ClassDescInfo();
+        desc.className = readUTF();
+        desc.suid = readLong();
+        desc.flags = (byte) readByte();
+
+        // Register handle BEFORE reading remaining content (matches writer order)
+        handleList.add(desc);
+
+        int fieldCount = readShort();
+
+        desc.fieldNames = new String[fieldCount];
+        desc.fieldTypes = new byte[fieldCount];
+        desc.fieldClassNames = new String[fieldCount];
+
+        for (int i = 0; i < fieldCount; i++) {
+            desc.fieldTypes[i] = (byte) readByte();
+            desc.fieldNames[i] = readUTF();
+            byte tc = desc.fieldTypes[i];
+            if (tc == 'L' || tc == '[') {
+                // Object/array field: type name is TC_STRING or TC_REFERENCE
+                desc.fieldClassNames[i] = readTypeString();
+            }
+        }
+
+        // classAnnotation: skip until TC_ENDBLOCKDATA
+        skipAnnotations();
+
+        // superClassDesc
+        desc.superDesc = readClassDesc();
+
+        return desc;
+    }
+
+    /** Read a string that may be TC_STRING, TC_LONGSTRING, or TC_REFERENCE. */
+    private String readTypeString() throws IOException {
+        int tc = readByte();
+        if (tc == TC_STRING) {
+            String s = readUTF();
+            handleList.add(s); // register handle
+            return s;
+        }
+        if (tc == TC_REFERENCE) {
+            int handle = readInt();
+            int idx = handle - HANDLE_BASE;
+            if (idx >= 0 && idx < handleList.size()) {
+                Object obj = handleList.get(idx);
+                if (obj instanceof String) return (String) obj;
+            }
+            throw new IOException("Bad string reference: 0x" + Integer.toHexString(handle));
+        }
+        throw new IOException("Expected string in field descriptor, got tc=0x"
+            + Integer.toHexString(tc & 0xFF));
+    }
+
+    /** Skip annotation blocks (class annotations, object annotations). */
+    private void skipAnnotations() throws IOException {
+        while (true) {
+            int tc = readByte();
+            if (tc == TC_ENDBLOCKDATA) return;
+            if (tc == TC_BLOCKDATA) {
+                int len = readByte() & 0xFF;
+                skipBytes(len);
+            } else if (tc == TC_BLOCKDATALONG) {
+                int len = readInt();
+                skipBytes(len);
+            } else {
+                // It's an object annotation — read and discard
+                // Push back the tc byte... we can't easily do that.
+                // Instead, handle common cases
+                throw new IOException("Unexpected tc=0x" + Integer.toHexString(tc & 0xFF)
+                    + " in annotation at position " + (position - 1));
+            }
+        }
+    }
+
+    /** Skip block data and all contents until TC_ENDBLOCKDATA. */
+    private void skipBlockData(int tc) throws IOException {
+        if (tc == TC_BLOCKDATA) {
+            int len = readByte() & 0xFF;
+            skipBytes(len);
+        } else if (tc == TC_BLOCKDATALONG) {
+            int len = readInt();
+            skipBytes(len);
+        }
+    }
+
+    // ── Standard format object reader ────────────────────────────────────────
+
+    /**
+     * Read a standard TC_OBJECT: classDesc chain + field values + optional block data.
+     */
+    private Object readStdObject() throws IOException, ClassNotFoundException {
+        ClassDescInfo desc = readClassDesc();
+        if (desc == null) {
+            throw new IOException("TC_OBJECT with null class desc at position " + (position - 1));
+        }
+
+        // Check flags for special handling
+        boolean isExternalizable = (desc.flags & SC_EXTERNALIZABLE) != 0;
+        boolean isWriteMethod = (desc.flags & SC_WRITE_METHOD) != 0;
+
+        // Build the full field list from class hierarchy (most-super first)
+        ArrayList<ClassDescInfo> hierarchy = new ArrayList<>();
+        ClassDescInfo d = desc;
+        while (d != null) {
+            hierarchy.add(d);
+            d = d.superDesc;
+        }
+        java.util.Collections.reverse(hierarchy);
+
+        String className = desc.className;
+
+        // Diagnostic: log first few objects
+        if (totalObjects < 3) {
+            int tf = 0;
+            for (ClassDescInfo cdi : hierarchy) tf += cdi.fieldNames.length;
+            System.out.println("[TIS-STD] readStdObject #" + totalObjects + " class=" + className
+                + " hierarchy=" + hierarchy.size() + " totalFields=" + tf
+                + " flags=0x" + Integer.toHexString(desc.flags & 0xFF)
+                + " pos=" + position);
+        }
+
+        // ── Special handling for JDK collections ────────────────────────
+        if ("java.util.ArrayList".equals(className)) {
+            return readArrayListStd(hierarchy);
+        }
+        if ("java.util.HashMap".equals(className)) {
+            return readHashMapStd(hierarchy);
+        }
+        if ("java.util.EnumMap".equals(className)) {
+            return readEnumMapStd(hierarchy);
+        }
+        if ("java.util.BitSet".equals(className)) {
+            return readBitSetStd(hierarchy);
+        }
+
+        // ── Singleton guard ────────────────────────────────────────────
+        if (isSingletonClassName(className)) {
+            totalObjects++;
+            register(null);
+            drainObjectFields(hierarchy, isWriteMethod || isExternalizable);
+            return null;
+        }
+
+        // ── Stage 1: Class.forName (cached) ──────────────────────────
+        Class<?> clazz = classForNameCache.get(className);
+        if (clazz == null && !classForNameCache.containsKey(className)) {
+            try {
+                clazz = Class.forName(className);
+            } catch (Throwable e) {
+                if (listener != null) listener.onError("Class.forName", className,
+                    new RuntimeException(e.getClass().getName() + ": " + e.getMessage()));
+            }
+            classForNameCache.put(className, clazz);
+        }
+
+        // ── Stage 2: Allocate ─────────────────────────────────────────
+        Object obj = null;
+        if (clazz != null) {
+            try {
+                obj = allocateInstance(clazz);
+            } catch (Exception e) {
+                if (listener != null) listener.onError("allocate", className, e);
+            } catch (Throwable t) {
+                if (listener != null) listener.onError("allocate", className,
+                    new RuntimeException(t.getClass().getName() + ": " + t.getMessage()));
+            }
+        }
+
+        totalObjects++;
+
+        // ── Stage 3: Structural failure — drain ──────────────────────
+        if (obj == null) {
+            register(null);
+            drainObjectFields(hierarchy, isWriteMethod || isExternalizable);
+            return null;
+        }
+
+        register(obj);
+
+        if (isExternalizable) {
+            readExternalData(obj, clazz);
+            if (postDeserializeCallback != null) {
+                postDeserializeCallback.onObjectDeserialized(obj);
+            }
+            return resolveObject(obj);
+        }
+
+        // Push STD_FIELDS frame that reads all fields in descriptor order
+        Frame f = pushFrame();
+        f.type = Frame.STD_FIELDS;
+        f.container = obj;
+        f.className = className;
+        f.fieldHierarchy = hierarchy.toArray(new ClassDescInfo[0]);
+        f.totalFieldIndex = 0;
+        // remaining = total fields across hierarchy
+        int totalFields = 0;
+        for (ClassDescInfo cdi : hierarchy) totalFields += cdi.fieldNames.length;
+        f.remaining = totalFields;
+
+        if (totalFields == 0) {
+            frameTop--;
+            if (isWriteMethod) {
+                readObjectAnnotation(obj, className);
+            }
+            if (postDeserializeCallback != null) {
+                postDeserializeCallback.onObjectDeserialized(obj);
+            }
+            return resolveObject(obj);
+        }
+
+        // Process any leading primitive fields immediately
+        return processStdFieldsFrame();
+    }
+
+    /**
+     * Process the STD_FIELDS frame at top of stack.
+     * Reads primitive fields inline; returns NEEDS_CHILDREN when an object field is encountered.
+     */
+    private Object processStdFieldsFrame() throws IOException, ClassNotFoundException {
+        Frame f = frameStack[frameTop - 1];
+        ClassDescInfo[] hierarchy = f.fieldHierarchy;
+
+        // Diagnostic: first invocation for Game
+        if ("game.Game".equals(f.className) && f.totalFieldIndex == 0) {
+            System.out.println("[TIS-STD] processStdFieldsFrame START for game.Game remaining=" + f.remaining
+                + " hierarchy=" + hierarchy.length + " fieldCounts="
+                + java.util.Arrays.toString(java.util.stream.IntStream.range(0, hierarchy.length)
+                    .map(i -> hierarchy[i].fieldNames.length).toArray()));
+        }
+
+        while (f.remaining > 0) {
+            // Find current field
+            int fieldIdx = f.totalFieldIndex;
+            int counted = 0;
+            ClassDescInfo currentClass = null;
+            int fieldInClass = 0;
+            for (ClassDescInfo cdi : hierarchy) {
+                if (counted + cdi.fieldNames.length > fieldIdx) {
+                    currentClass = cdi;
+                    fieldInClass = fieldIdx - counted;
+                    break;
+                }
+                counted += cdi.fieldNames.length;
+            }
+
+            if (currentClass == null) break;
+
+            byte ftc = currentClass.fieldTypes[fieldInClass];
+            String fieldName = currentClass.fieldNames[fieldInClass];
+            String typeDesc = (ftc == 'L' || ftc == '[') ? currentClass.fieldClassNames[fieldInClass] : String.valueOf((char) ftc);
+
+            if (isPrimitiveTypeCode(ftc)) {
+                // Read and set primitive immediately
+                Object value = readPrimitiveValue(ftc);
+                if ("game.Game".equals(f.className) && f.totalFieldIndex < 8) {
+                    System.out.println("[TIS-FIELD] prim field[" + f.totalFieldIndex + "] "
+                        + currentClass.className + "." + fieldName + " type=" + (char)ftc
+                        + " val=" + value);
+                }
+                try {
+                    setFieldSafely(f.container, fieldName, value, typeDesc);
+                } catch (Exception e) {
+                    if (listener != null) listener.onError("setField", currentClass.className, e);
+                }
+                f.totalFieldIndex++;
+                f.remaining--;
+            } else {
+                // Object field — store field name and return NEEDS_CHILDREN
+                f.nextFieldName = fieldName;
+                return NEEDS_CHILDREN;
+            }
+        }
+
+        // All fields done
+        frameTop--;
+        // Check for SC_WRITE_METHOD block data
+        // (need to check flags of the most-derived class)
+        byte topFlags = hierarchy[hierarchy.length - 1].flags;
+        if ((topFlags & SC_WRITE_METHOD) != 0) {
+            readObjectAnnotation(f.container, f.className);
+        }
+        if (postDeserializeCallback != null) {
+            postDeserializeCallback.onObjectDeserialized(f.container);
+        }
+        return resolveObject(f.container);
+    }
+
+    /** Read a primitive value based on its type code. */
+    private Object readPrimitiveValue(byte typeCode) throws IOException {
+        switch (typeCode) {
+            case 'B': return (byte) readByte();
+            case 'C': return (char) readChar();
+            case 'D': return readDouble();
+            case 'F': return readFloat();
+            case 'I': return readInt();
+            case 'J': return readLong();
+            case 'S': return (short) readShort();
+            case 'Z': return readByte() != 0;
+            default: throw new IOException("Unknown primitive type code: " + (char) typeCode);
+        }
+    }
+
+    private boolean isPrimitiveTypeCode(byte tc) {
+        return tc == 'B' || tc == 'C' || tc == 'D' || tc == 'F'
+            || tc == 'I' || tc == 'J' || tc == 'S' || tc == 'Z';
+    }
+
+    /** Drain field values for an object that couldn't be allocated. */
+    private void drainObjectFields(ArrayList<ClassDescInfo> hierarchy, boolean hasBlockData) throws IOException {
+        for (ClassDescInfo cdi : hierarchy) {
+            for (int i = 0; i < cdi.fieldNames.length; i++) {
+                if (isPrimitiveTypeCode(cdi.fieldTypes[i])) {
+                    readPrimitiveValue(cdi.fieldTypes[i]);
+                } else {
+                    // Read and discard the object reference
+                    try {
+                        readObjectUnframed();
+                    } catch (Throwable t) { /* ignore */ }
+                }
+            }
+        }
+        if (hasBlockData) {
+            // Skip block data until TC_ENDBLOCKDATA
+            while (true) {
+                int tc = readByte();
+                if (tc == TC_ENDBLOCKDATA) break;
+                if (tc == TC_BLOCKDATA) {
+                    int len = readByte() & 0xFF;
+                    skipBytes(len);
+                } else if (tc == TC_BLOCKDATALONG) {
+                    int len = readInt();
+                    skipBytes(len);
+                } else {
+                    // It's an embedded object — skip it
+                    try { readObjectUnframed(); } catch (Throwable t) { /* ignore */ }
+                }
+            }
+        }
+    }
+
+    /** Read object annotation block data (for SC_WRITE_METHOD). */
+    private void readObjectAnnotation(Object obj, String className) throws IOException {
+        // Read block data + objects until TC_ENDBLOCKDATA
+        // For Ludii custom writeObject classes, we need to handle specific formats
+        while (true) {
+            int tc = readByte();
+            if (tc == TC_ENDBLOCKDATA) break;
+            if (tc == TC_BLOCKDATA) {
+                int len = readByte() & 0xFF;
+                skipBytes(len);
+            } else if (tc == TC_BLOCKDATALONG) {
+                int len = readInt();
+                skipBytes(len);
+            } else {
+                // Embedded object — try to read and apply based on class
+                try { readObjectUnframed(); } catch (Throwable t) { /* ignore */ }
+            }
+        }
+    }
+
+    /** Read external data for Externalizable objects. */
+    private void readExternalData(Object obj, Class<?> clazz) throws IOException {
+        // For SC_EXTERNALIZABLE|SC_BLOCK_DATA: read block data until TC_ENDBLOCKDATA
+        // Then call readExternal on the object
+        java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+        while (true) {
+            int tc = readByte();
+            if (tc == TC_ENDBLOCKDATA) break;
+            if (tc == TC_BLOCKDATA) {
+                int len = readByte() & 0xFF;
+                for (int i = 0; i < len; i++) baos.write(readByte());
+            } else if (tc == TC_BLOCKDATALONG) {
+                int len = readInt();
+                for (int i = 0; i < len; i++) baos.write(readByte());
+            } else {
+                throw new IOException("Unexpected tc=0x" + Integer.toHexString(tc & 0xFF)
+                    + " in external data for " + clazz.getName());
+            }
+        }
+        // Call readExternal with the buffered data
+        if (obj instanceof java.io.Externalizable) {
+            try {
+                java.io.ByteArrayInputStream bais = new java.io.ByteArrayInputStream(baos.toByteArray());
+                java.io.DataInputStream dis = new java.io.DataInputStream(bais);
+                ((java.io.Externalizable) obj).readExternal(new SimpleObjectInput(dis));
+            } catch (Throwable t) {
+                if (listener != null) listener.onError("readExternal", clazz.getName(),
+                    new RuntimeException(t.getClass().getName() + ": " + t.getMessage()));
+            }
+        }
+    }
+
+    // ── Standard format array reader ─────────────────────────────────────────
+
+    private Object readStdArray() throws IOException, ClassNotFoundException {
+        ClassDescInfo desc = readClassDesc();
+        if (desc == null) {
+            throw new IOException("TC_ARRAY with null class desc at position " + (position - 1));
+        }
+        String className = desc.className;
+        int length = readInt();
+
+        // Primitive arrays
+        if (className.equals("[B")) {
+            byte[] arr = new byte[length];
+            readFully(arr);
+            register(arr);
+            return arr;
+        } else if (className.equals("[I")) {
+            int[] arr = new int[length];
+            for (int i = 0; i < length; i++) arr[i] = readInt();
+            register(arr);
+            return arr;
+        } else if (className.equals("[J")) {
+            long[] arr = new long[length];
+            for (int i = 0; i < length; i++) arr[i] = readLong();
+            register(arr);
+            return arr;
+        } else if (className.equals("[D")) {
+            double[] arr = new double[length];
+            for (int i = 0; i < length; i++) arr[i] = readDouble();
+            register(arr);
+            return arr;
+        } else if (className.equals("[F")) {
+            float[] arr = new float[length];
+            for (int i = 0; i < length; i++) arr[i] = readFloat();
+            register(arr);
+            return arr;
+        } else if (className.equals("[Z")) {
+            boolean[] arr = new boolean[length];
+            for (int i = 0; i < length; i++) arr[i] = readByte() != 0;
+            register(arr);
+            return arr;
+        } else if (className.equals("[S")) {
+            short[] arr = new short[length];
+            for (int i = 0; i < length; i++) arr[i] = (short) readShort();
+            register(arr);
+            return arr;
+        } else if (className.equals("[C")) {
+            char[] arr = new char[length];
+            for (int i = 0; i < length; i++) arr[i] = (char) readChar();
+            register(arr);
+            return arr;
+        }
+
+        // Object array
+        Object[] arr = allocateObjectArray(className, length);
+        register(arr);
+        if (length == 0) return arr;
+
+        Frame f = pushFrame();
+        f.type = Frame.OBJECT_ARRAY;
+        f.container = arr;
+        f.remaining = length;
+        f.nextIndex = 0;
+        return NEEDS_CHILDREN;
+    }
+
+    // ── Standard format collection readers ────────────────────────────────────
+
+    private Object readArrayListStd(ArrayList<ClassDescInfo> hierarchy) throws IOException, ClassNotFoundException {
+        // Read default field: int size
+        // Find the size field in the ArrayList classDesc
+        int size = 0;
+        for (ClassDescInfo cdi : hierarchy) {
+            for (int i = 0; i < cdi.fieldNames.length; i++) {
+                if (cdi.fieldTypes[i] == 'I' && "size".equals(cdi.fieldNames[i])) {
+                    size = readInt();
+                }
+            }
+        }
+        // Skip TC_BLOCKDATA(capacity)
+        int tc = readByte();
+        if (tc == TC_BLOCKDATA) {
+            int len = readByte() & 0xFF;
+            skipBytes(len);
+        }
+        // Create ArrayList and register
+        ArrayList<Object> list = new ArrayList<>(size);
+        totalObjects++;
+        register(list);
+        // Read elements
+        for (int i = 0; i < size; i++) {
+            Object elem = readObjectUnframed();
+            list.add(elem);
+        }
+        // Read TC_ENDBLOCKDATA
+        readByte(); // TC_ENDBLOCKDATA
+        return list;
+    }
+
+    private Object readHashMapStd(ArrayList<ClassDescInfo> hierarchy) throws IOException, ClassNotFoundException {
+        // Read default fields: float loadFactor, int threshold
+        float loadFactor = 0.75f;
+        int threshold = 0;
+        for (ClassDescInfo cdi : hierarchy) {
+            for (int i = 0; i < cdi.fieldNames.length; i++) {
+                if (cdi.fieldTypes[i] == 'F' && "loadFactor".equals(cdi.fieldNames[i])) {
+                    loadFactor = readFloat();
+                } else if (cdi.fieldTypes[i] == 'I' && "threshold".equals(cdi.fieldNames[i])) {
+                    threshold = readInt();
+                }
+            }
+        }
+        // Block data: capacity + mappings count
+        int tc = readByte();
+        int capacity = 0, mappings = 0;
+        if (tc == TC_BLOCKDATA) {
+            int len = readByte() & 0xFF;
+            capacity = readInt();
+            mappings = readInt();
+            // Skip any remaining bytes in block
+            if (len > 8) skipBytes(len - 8);
+        }
+        // Create HashMap and register
+        HashMap<Object, Object> map = new HashMap<>(capacity, loadFactor);
+        totalObjects++;
+        register(map);
+        // Read key-value pairs
+        for (int i = 0; i < mappings; i++) {
+            Object key = readObjectUnframed();
+            Object value = readObjectUnframed();
+            map.put(key, value);
+        }
+        // Read TC_ENDBLOCKDATA
+        readByte();
+        return map;
+    }
+
+    private Object readEnumMapStd(ArrayList<ClassDescInfo> hierarchy) throws IOException, ClassNotFoundException {
+        // Read default field: Class keyType
+        Class<?> keyType = null;
+        for (ClassDescInfo cdi : hierarchy) {
+            for (int i = 0; i < cdi.fieldNames.length; i++) {
+                if ("keyType".equals(cdi.fieldNames[i])) {
+                    // Read the Class object (TC_CLASS or TC_NULL)
+                    keyType = readClassField();
+                }
+            }
+        }
+        // Create EnumMap and register
+        EnumMap map = keyType != null ? new EnumMap(keyType) : new EnumMap(Enum.class);
+        totalObjects++;
+        register(map);
+        // Block data: size + key-value pairs
+        int tc = readByte();
+        int size = 0;
+        if (tc == TC_BLOCKDATA) {
+            int len = readByte() & 0xFF;
+            size = readInt();
+            if (len > 4) skipBytes(len - 4);
+        }
+        for (int i = 0; i < size; i++) {
+            Object key = readObjectUnframed();
+            Object value = readObjectUnframed();
+            map.put(key, value);
+        }
+        // Read TC_ENDBLOCKDATA
+        readByte();
+        return map;
+    }
+
+    private Object readBitSetStd(ArrayList<ClassDescInfo> hierarchy) throws IOException, ClassNotFoundException {
+        // Read default field: long[] bits
+        long[] words = null;
+        for (ClassDescInfo cdi : hierarchy) {
+            for (int i = 0; i < cdi.fieldNames.length; i++) {
+                if ("bits".equals(cdi.fieldNames[i])) {
+                    // The bits field is a long[] — read as an object
+                    words = (long[]) readObjectUnframed();
+                }
+            }
+        }
+        // Create BitSet and register
+        BitSet bs = new BitSet();
+        if (words != null) {
+            for (int i = 0; i < words.length; i++) {
+                long w = words[i];
+                for (int bit = 0; bit < 64; bit++) {
+                    if ((w & (1L << bit)) != 0) {
+                        bs.set(i * 64 + bit);
+                    }
+                }
+            }
+        }
+        totalObjects++;
+        register(bs);
+        // SC_WRITE_METHOD: read TC_ENDBLOCKDATA
+        readByte();
+        return bs;
+    }
+
+    /** Read a Class field value (TC_CLASS + classDesc or TC_NULL). */
+    private Class<?> readClassField() throws IOException {
+        int tc = readByte();
+        if (tc == TC_NULL) return null;
+        if (tc == TC_CLASS) {
+            ClassDescInfo desc = readClassDesc();
+            if (desc == null) return null;
+            // Register the class object handle
+            totalObjects++;
+            register(null); // Class objects not fully supported
+            try {
+                return Class.forName(desc.className);
+            } catch (ClassNotFoundException e) {
+                return null;
+            }
+        }
+        throw new IOException("Expected TC_CLASS or TC_NULL, got 0x" + Integer.toHexString(tc & 0xFF));
+    }
+
+    // ── Standard format enum reader ──────────────────────────────────────────
+
+    private Object readStdEnum() throws IOException {
+        // TC_ENUM: classDesc (enum class) + TC_STRING (constant name)
+        ClassDescInfo desc = readClassDesc();
+        String className = desc != null ? desc.className : "unknown";
+
+        // Read enum constant name (TC_STRING or TC_REFERENCE)
+        String constName = readTypeString();
+
+        // Resolve the enum constant
+        Object result = resolveEnumConstant(className, constName);
+
+        // Register the enum object handle (after string, matching writer order)
+        totalObjects++;
+        register(result);
+        return result;
+    }
+
+    /** Resolve an enum constant from class name and constant name. */
+    private Object resolveEnumConstant(String className, String constName) {
+        String cacheKey = className + "." + constName;
+        Object cached = enumConstantCache.get(cacheKey);
+        if (cached != null) return cached;
+
+        try {
+            Class<?> clazz = classForNameCache.get(className);
+            if (clazz == null) {
+                clazz = Class.forName(className);
+                classForNameCache.put(className, clazz);
+            }
+            java.lang.reflect.Method valueOf = enumValueOfCache.get(className);
+            if (valueOf == null) {
+                valueOf = clazz.getMethod("valueOf", String.class);
+                enumValueOfCache.put(className, valueOf);
+            }
+            Object result = valueOf.invoke(null, constName);
+            enumConstantCache.put(cacheKey, result);
+            return result;
+        } catch (Exception e) {
+            if (listener != null) listener.onError("enum", className, e);
+            return null;
+        }
+    }
+
+    // ── Simple ObjectInput for readExternal ──────────────────────────────────
+
+    private static final class SimpleObjectInput extends java.io.DataInputStream
+            implements java.io.ObjectInput {
+        SimpleObjectInput(java.io.InputStream in) { super(in); }
+        public Object readObject() { throw new UnsupportedOperationException(); }
+        public void close() {}
+    }
 
     // ── Schema manifest ──────────────────────────────────────────────────
 

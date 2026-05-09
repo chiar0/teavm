@@ -842,7 +842,7 @@ public final class ReflectLink {
                 java.lang.reflect.Method m = chunkSetClass.getMethod("recomputeWordsInUse");
                 m.invoke(obj);
                 return;
-            } catch (NoSuchMethodException e) {
+            } catch (NoSuchMethodException | IllegalAccessException | java.lang.reflect.InvocationTargetException e) {
                 // Fall through to reflection
             }
         } catch (ClassNotFoundException | NoClassDefFoundError e) {

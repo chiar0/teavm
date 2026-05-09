@@ -15,5 +15,9 @@
  */
 package org.teavm.classlib.java.io;
 
+import java.io.IOException;
+
 public interface TExternalizable {
+    void readExternal(TObjectInput in) throws IOException, ClassNotFoundException;
+    void writeExternal(TObjectOutput out) throws IOException;
 }
