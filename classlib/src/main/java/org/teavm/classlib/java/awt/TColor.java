@@ -15,7 +15,7 @@
  */
 package org.teavm.classlib.java.awt;
 
-public class TColor implements TPaint {
+public class TColor implements TPaint, java.io.Serializable {
 
     public static final int RGB = 1;
 

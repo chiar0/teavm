@@ -10,7 +10,7 @@ import gnu.trove.iterator.TFloatIterator;
  * TeaVM-compatible replacement for Trove's TFloatArrayList.
  * Uses internal float[] storage instead of sun.misc.Unsafe.
  */
-public class TFloatArrayList {
+public class TFloatArrayList implements java.io.Externalizable {
 
     protected float no_entry_value;
     private float[] data;
@@ -191,6 +191,27 @@ public class TFloatArrayList {
 
     public TFloatIterator iterator() {
         return new TFloatArrayIterator();
+    }
+
+    // ---- Externalizable (matches Ludii's real TFloatArrayList format) ----
+
+    @Override
+    public void writeExternal(java.io.ObjectOutput out) throws java.io.IOException {
+        out.writeByte(0); // version
+        out.writeInt(size);
+        out.writeFloat(no_entry_value);
+        out.writeInt(data.length);
+        for (int i = 0; i < data.length; i++) out.writeFloat(data[i]);
+    }
+
+    @Override
+    public void readExternal(java.io.ObjectInput in) throws java.io.IOException, ClassNotFoundException {
+        in.readByte(); // version
+        size = in.readInt();
+        no_entry_value = in.readFloat();
+        int capacity = in.readInt();
+        data = new float[Math.max(1, capacity)];
+        for (int i = 0; i < capacity; i++) data[i] = in.readFloat();
     }
 
     class TFloatArrayIterator implements TFloatIterator {

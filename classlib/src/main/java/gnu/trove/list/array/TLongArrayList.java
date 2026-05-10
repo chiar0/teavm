@@ -9,7 +9,7 @@ import gnu.trove.iterator.TLongIterator;
  * TeaVM-compatible replacement for Trove's TLongArrayList.
  * Uses internal long[] storage instead of sun.misc.Unsafe.
  */
-public class TLongArrayList {
+public class TLongArrayList implements java.io.Externalizable {
 
     protected long no_entry_value;
     private long[] data;
@@ -208,6 +208,27 @@ public class TLongArrayList {
 
     public TLongIterator iterator() {
         return new TLongArrayIterator();
+    }
+
+    // ---- Externalizable (matches Ludii's real TLongArrayList format) ----
+
+    @Override
+    public void writeExternal(java.io.ObjectOutput out) throws java.io.IOException {
+        out.writeByte(0); // version
+        out.writeInt(size);
+        out.writeLong(no_entry_value);
+        out.writeInt(data.length);
+        for (int i = 0; i < data.length; i++) out.writeLong(data[i]);
+    }
+
+    @Override
+    public void readExternal(java.io.ObjectInput in) throws java.io.IOException, ClassNotFoundException {
+        in.readByte(); // version
+        size = in.readInt();
+        no_entry_value = in.readLong();
+        int capacity = in.readInt();
+        data = new long[Math.max(1, capacity)];
+        for (int i = 0; i < capacity; i++) data[i] = in.readLong();
     }
 
     class TLongArrayIterator implements TLongIterator {

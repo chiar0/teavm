@@ -91,7 +91,7 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
         JDK_SUIDS.put("java.lang.Long",                 4290774380558885855L);
         JDK_SUIDS.put("java.lang.Double",               -9172774392245257468L);
         JDK_SUIDS.put("java.lang.Float",                -2671254064391917916L);
-        JDK_SUIDS.put("java.lang.Boolean",              -3665804199070385834L);
+        JDK_SUIDS.put("java.lang.Boolean",              -3665804199014368530L);
         JDK_SUIDS.put("java.lang.Short",                7515723878860438694L);
         JDK_SUIDS.put("java.lang.Character",            3786198719317633806L);
         JDK_SUIDS.put("java.lang.Byte",                -7183690577395765713L);
@@ -99,12 +99,28 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
         JDK_SUIDS.put("java.lang.String",              -6849794470754667710L);
         JDK_SUIDS.put("java.lang.Class",               -5198453180811184097L);
         JDK_SUIDS.put("java.lang.Enum",                0L);
+        // AWT shims
+        JDK_SUIDS.put("java.awt.Color",                118526816881161077L);
+        JDK_SUIDS.put("java.awt.geom.Point2D",         0L);
+        JDK_SUIDS.put("java.awt.geom.Point2D$Double",  6150783262733311327L);
         // Ludii collections
-        JDK_SUIDS.put("collections.FastArrayList",     1L);
+        JDK_SUIDS.put("main.collections.FastArrayList",     1L);
         // Ludii Externalizable
-        JDK_SUIDS.put("collections.ChunkSet",          1L);
+        JDK_SUIDS.put("main.collections.ChunkSet",          1L);
         // Trove Externalizable
         JDK_SUIDS.put("gnu.trove.impl.hash.THash",     -1792948471915530295L);
+
+        // Ludii classes without declared SUID — JVM-computed values
+        // (until serialVersionUID = 1L is added to these source classes)
+        JDK_SUIDS.put("game.equipment.other.Map",       562689413632845372L);
+        JDK_SUIDS.put("game.equipment.other.Regions",   9131228671677844363L);
+        JDK_SUIDS.put("game.functions.booleans.BooleanFunction", -8186094994586309608L);
+        JDK_SUIDS.put("game.functions.directions.Union", -8428686335448527228L);
+        JDK_SUIDS.put("game.functions.ints.IntFunction", 1965802786602055467L);
+        JDK_SUIDS.put("game.functions.region.RegionFunction", 5911177134226796258L);
+        JDK_SUIDS.put("game.functions.region.sites.LineOfSightType", 0L);
+        JDK_SUIDS.put("game.util.math.Pair",            5469498808744302781L);
+        JDK_SUIDS.put("game.util.moves.To",             7748765144562166352L);
     }
 
     // ── State ──────────────────────────────────────────────────────────────────
@@ -377,8 +393,9 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
 
         // ── Class reference ──
         if (obj instanceof Class) {
+            Class<?> cls = (Class<?>) obj;
             writeByte(TC_CLASS);
-            writeClassDesc(((Class<?>) obj).getName(), false, 0);
+            writeClassDesc(cls.getName(), cls.isEnum(), (byte) (cls.isEnum() ? SC_ENUM : 0));
             assignObjectHandle(obj);
             return true;
         }
@@ -390,7 +407,7 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
             writeByte(TC_ENUM);
             writeClassDesc(enumClassName, true, SC_ENUM | SC_SERIALIZABLE);
             assignObjectHandle(obj);
-            writeStandardString(e.name());
+            writeNewString(e.name());
             return true;
         }
 
@@ -417,8 +434,24 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
         // ── JDK Collections: standard format ──
         if (obj instanceof ArrayList)    { writeArrayListStd((ArrayList<?>) obj); return true; }
         if (obj instanceof HashMap)      { writeHashMapStd((HashMap<?, ?>) obj); return true; }
-        if (obj instanceof EnumMap)      { writeEnumMapStd((EnumMap<?, ?>) obj); return true; }
+        if (obj instanceof EnumMap)      {
+            EnumMap<?, ?> em = (EnumMap<?, ?>) obj;
+            Class<?> kt = getEnumMapKeyType(em);
+            if (kt != null) {
+                writeEnumMapStd(em);
+            } else {
+                System.out.println("[TOS] EnumMap with NULL keyType! size=" + em.size());
+                writeHashMapStd(new HashMap<>(em));
+            }
+            return true;
+        }
         if (obj instanceof BitSet)       { writeBitSetStd((BitSet) obj); return true; }
+
+        // ── FastArrayList: standard SC_WRITE_METHOD format ──
+        if (className != null && className.equals("main.collections.FastArrayList")) {
+            writeFastArrayListStd(obj);
+            return true;
+        }
 
         // ── Object array (push frame for elements) ──
         if (obj instanceof Object[]) {
@@ -747,6 +780,23 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
     }
 
     /**
+     * Write a string with TC_STRING always (never TC_REFERENCE).
+     * Used for enum constant names where some JVMs' readString()
+     * in readEnum context may not handle TC_REFERENCE correctly.
+     */
+    private void writeNewString(String s) throws IOException {
+        int handle = nextHandle++;
+        // Do NOT register in stringHandles — enum names must never be TC_REFERENCE'd
+        // because JVM's readString() in readEnum doesn't handle TC_REFERENCE
+        traceHandle("NS:" + s.substring(0, Math.min(20, s.length())));
+        writeByte(TC_STRING);
+        byte[] bytes = s.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        writeShort(bytes.length);
+        out.write(bytes);
+        bytePos += 2 + bytes.length;
+    }
+
+    /**
      * Write a raw UTF string for class descriptor fields (no TC_STRING prefix).
      * Standard Java serialization uses this format for className, fieldName,
      * and fieldTypeName inside TC_CLASSDESC blocks.
@@ -883,7 +933,7 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
         } else {
             writeByte(TC_CLASSDESC);
             writeDescString("java.lang.Boolean");
-            writeLong(-3665804199070385834L);
+            writeLong(-3665804199014368530L);
             int descHandle = assignClassDescHandle("java.lang.Boolean");
             writeByte(SC_SERIALIZABLE);
             writeShort(1);
@@ -1026,7 +1076,7 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
             writeByte(INT_TYPE);
             writeDescString("size");
             writeByte(TC_ENDBLOCKDATA);
-            writeClassDesc("java.util.AbstractList", false, (byte) 0);
+            writeByte(TC_NULL); // ArrayList extends AbstractList which is NOT Serializable
         }
         assignObjectHandle(list);
         // Field data for AbstractList: no serializable fields (modCount is transient)
@@ -1106,11 +1156,11 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
             writeByte(TC_NULL);
         }
         assignObjectHandle(map);
-        // Field data: Class keyType
+        // Field data: Class keyType — must use writeObject to register handle
+        // (JVM's ObjectInputStream resolves through readObject0 which assigns handles)
         Class<?> keyType = getEnumMapKeyType(map);
         if (keyType != null) {
-            writeByte(TC_CLASS);
-            writeClassDesc(keyType.getName(), false, (byte) 0);
+            writeObject(keyType);
         } else {
             writeByte(TC_NULL);
         }
@@ -1123,24 +1173,39 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
         writeByte(TC_ENDBLOCKDATA);
     }
 
-    /** Extract the key type from an EnumMap via reflection or entry-set fallback. */
+    /** Last known EnumMap keyType for empty-map fallback. */
+    private static Class<?> lastEnumMapKeyType;
+
+    /** Extract the key type from an EnumMap. */
     private static Class<?> getEnumMapKeyType(EnumMap<?, ?> map) {
+        // Try reflection on the runtime class (works in both TeaVM and JVM)
+        try {
+            Field f = map.getClass().getDeclaredField("keyType");
+            f.setAccessible(true);
+            Class<?> kt = (Class<?>) f.get(map);
+            if (kt != null) { lastEnumMapKeyType = kt; return kt; }
+        } catch (Throwable t) {}
+        // Fallback: reflection on the declared type
         try {
             Field f = EnumMap.class.getDeclaredField("keyType");
             f.setAccessible(true);
             Class<?> kt = (Class<?>) f.get(map);
-            if (kt != null) return kt;
+            if (kt != null) { lastEnumMapKeyType = kt; return kt; }
         } catch (Throwable t) {}
-        // Fallback: derive keyType from first entry
+        // Entry-set fallback: derive keyType from first entry
         try {
             for (Object e : map.entrySet()) {
                 Map.Entry<?, ?> entry = (Map.Entry<?, ?>) e;
                 Object key = entry.getKey();
-                if (key instanceof Enum) {
-                    return ((Enum<?>) key).getDeclaringClass();
+                if (key != null) {
+                    Class<?> kt = key.getClass();
+                    lastEnumMapKeyType = kt;
+                    return kt;
                 }
             }
         } catch (Throwable t) {}
+        // Last resort: use the most recently seen EnumMap keyType
+        if (lastEnumMapKeyType != null) return lastEnumMapKeyType;
         return null;
     }
 
@@ -1172,6 +1237,59 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
         long[] words = bs.toLongArray();
         writeObject(words);
         // SC_WRITE_METHOD: BitSet.writeObject ends with defaultWriteObject() then block data ends
+        writeByte(TC_ENDBLOCKDATA);
+    }
+
+    /**
+     * Write collections.FastArrayList in standard SC_WRITE_METHOD format.
+     * Standard: SC_SERIALIZABLE|SC_WRITE_METHOD, field "int size",
+     * block data: writeInt(size) + writeObject(element) × size + TC_ENDBLOCKDATA.
+     */
+    private void writeFastArrayListStd(Object obj) throws IOException {
+        // Read size and data via reflection
+        int size = 0;
+        Object[] data = null;
+        try {
+            java.lang.reflect.Field sizeField = obj.getClass().getDeclaredField("size");
+            sizeField.setAccessible(true);
+            size = sizeField.getInt(obj);
+            java.lang.reflect.Field dataField = obj.getClass().getDeclaredField("data");
+            dataField.setAccessible(true);
+            data = (Object[]) dataField.get(obj);
+        } catch (Exception e) {
+            // Fallback: try to get size from public size() method
+            try {
+                java.lang.reflect.Method sizeMethod = obj.getClass().getMethod("size");
+                size = (Integer) sizeMethod.invoke(obj);
+            } catch (Exception ignored) {}
+        }
+
+        writeByte(TC_OBJECT);
+        Integer existing = classDescHandles.get("main.collections.FastArrayList");
+        if (existing != null) {
+            writeByte(TC_REFERENCE);
+            writeInt(existing);
+        } else {
+            writeByte(TC_CLASSDESC);
+            writeDescString("main.collections.FastArrayList");
+            writeLong(1L);
+            int descHandle = assignClassDescHandle("main.collections.FastArrayList");
+            writeByte(SC_SERIALIZABLE | SC_WRITE_METHOD);
+            writeShort(1);
+            writeByte(INT_TYPE);
+            writeDescString("size");
+            writeByte(TC_ENDBLOCKDATA);
+            writeByte(TC_NULL); // extends Object
+        }
+        assignObjectHandle(obj);
+        // Field data: int size
+        writeInt(size);
+        // Block data (SC_WRITE_METHOD): writeInt(capacity) + elements
+        writeBlockDataInt(size);
+        for (int i = 0; i < size; i++) {
+            Object elem = (data != null && i < data.length) ? data[i] : null;
+            writeObject(elem);
+        }
         writeByte(TC_ENDBLOCKDATA);
     }
 
@@ -1420,7 +1538,7 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
     private static boolean isCustomWriteMethodClass(String className) {
         return "other.state.container.BaseContainerState".equals(className)
             || "other.state.puzzle.BaseContainerStateDeductionPuzzles".equals(className)
-            || "collections.FastArrayList".equals(className);
+            || "main.collections.FastArrayList".equals(className);
     }
 
     private static String canonicalEnumClassName(Enum<?> e, String rawName) {

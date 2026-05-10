@@ -21,7 +21,7 @@ import org.teavm.classlib.java.lang.TCloneNotSupportedException;
 import org.teavm.interop.Rename;
 
 public class TEnumMap<K extends Enum<K>, V> extends TAbstractMap<K, V> implements Serializable, Cloneable {
-    private Class<K> keyType;
+    Class<K> keyType; // package-private for EnumMapHelper access
     private Object[] data;
     private boolean[] provided;
     private int size;
@@ -406,5 +406,10 @@ public class TEnumMap<K extends Enum<K>, V> extends TAbstractMap<K, V> implement
             };
         }
         return cachedValues;
+    }
+
+    /** Accessor for serialization support. */
+    public Class<K> getKeyType() {
+        return keyType;
     }
 }

@@ -1916,24 +1916,32 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
         return bs;
     }
 
-    /** Read a Class field value (TC_CLASS + classDesc or TC_NULL).
-     *  Used by EnumMap keyType field. Does NOT register a handle for the Class
-     *  object — the writer's writeEnumMapStd writes TC_CLASS + classDesc without
-     *  assigning a Class object handle. */
+    /** Read a Class field value (TC_CLASS + classDesc, TC_REFERENCE, or TC_NULL). */
     private Class<?> readClassField() throws IOException {
         int tc = readByte();
         if (tc == TC_NULL) return null;
+        if (tc == TC_REFERENCE) {
+            Object ref = readReference();
+            if (ref instanceof Class) return (Class<?>) ref;
+            return null;
+        }
         if (tc == TC_CLASS) {
             ClassDescInfo desc = readClassDesc();
             if (desc == null) return null;
-            // No handle registration — writer doesn't assign one for inline Class fields
             try {
-                return Class.forName(desc.className);
+                Class<?> cls = Class.forName(desc.className);
+                // Register handle to match writer's handle assignment for Class objects
+                logHandle(cls);
+                handleList.add(cls);
+                return cls;
             } catch (ClassNotFoundException e) {
+                // Register null handle to keep numbering aligned
+                logHandle(null);
+                handleList.add(null);
                 return null;
             }
         }
-        throw new IOException("Expected TC_CLASS or TC_NULL, got 0x" + Integer.toHexString(tc & 0xFF));
+        throw new IOException("Expected TC_CLASS, TC_REFERENCE, or TC_NULL, got 0x" + Integer.toHexString(tc & 0xFF));
     }
 
     // ── Standard format enum reader ──────────────────────────────────────────

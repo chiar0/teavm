@@ -15,7 +15,7 @@
  */
 package org.teavm.classlib.java.awt.geom;
 
-public abstract class TPoint2D implements Cloneable {
+public abstract class TPoint2D implements Cloneable, java.io.Serializable {
 
     public abstract double getX();
     public abstract double getY();

@@ -10,7 +10,7 @@ import gnu.trove.procedure.TIntProcedure;
  * TeaVM-compatible replacement for Trove's TIntArrayList.
  * Uses internal int[] storage instead of sun.misc.Unsafe.
  */
-public class TIntArrayList implements TIntCollection {
+public class TIntArrayList implements TIntCollection, java.io.Externalizable {
 
     protected int no_entry_value;
     private int[] data;
@@ -331,6 +331,27 @@ public class TIntArrayList implements TIntCollection {
     public boolean forEach(TIntProcedure procedure) {
         for (int i = 0; i < size; i++) if (!procedure.execute(data[i])) return false;
         return true;
+    }
+
+    // ---- Externalizable (matches Ludii's real TIntArrayList format) ----
+
+    @Override
+    public void writeExternal(java.io.ObjectOutput out) throws java.io.IOException {
+        out.writeByte(0); // version
+        out.writeInt(size);
+        out.writeInt(no_entry_value);
+        out.writeInt(data.length);
+        for (int i = 0; i < data.length; i++) out.writeInt(data[i]);
+    }
+
+    @Override
+    public void readExternal(java.io.ObjectInput in) throws java.io.IOException, ClassNotFoundException {
+        in.readByte(); // version
+        size = in.readInt();
+        no_entry_value = in.readInt();
+        int capacity = in.readInt();
+        data = new int[Math.max(1, capacity)];
+        for (int i = 0; i < capacity; i++) data[i] = in.readInt();
     }
 
     static class TIntArrayIterator implements TIntIterator {
