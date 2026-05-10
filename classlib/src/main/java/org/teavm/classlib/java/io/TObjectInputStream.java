@@ -23,13 +23,7 @@ import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.EnumMap;
 import java.util.HashMap;
-import java.util.HashSet;
-import java.util.LinkedHashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.TreeSet;
-import java.util.TreeMap;
 
 import org.teavm.classlib.io.SerializationDiagnostics;
 
@@ -270,48 +264,51 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
 
         if (REFLECT_LINK_AVAILABLE) {
             autoInstallReflectLink();
+            if (SerializationDiagnostics.isDebug()) {
+                System.out.println("[TIS] ReflectLink available=" + REFLECT_LINK_AVAILABLE
+                    + " allocator=" + (objectAllocator != null) + " fieldWriter=" + (fieldWriter != null));
+            }
+        } else {
+            if (SerializationDiagnostics.isDebug()) {
+                System.out.println("[TIS] ReflectLink NOT available");
+            }
         }
     }
 
     private void autoInstallReflectLink() {
         try {
-            Class<?> rlClass = Class.forName("org.teavm.classlib.reflect.ReflectLink");
-            Class<?> allocResultClass = Class.forName("org.teavm.classlib.reflect.ReflectLink$AllocResult");
-            java.lang.reflect.Method allocMethod = rlClass.getMethod("allocateWithReason", Class.class);
-            java.lang.reflect.Field objField = allocResultClass.getField("obj");
-            java.lang.reflect.Method setFieldMethod = rlClass.getMethod("setField",
-                Object.class, String.class, Object.class, String.class);
-            java.lang.reflect.Method allocArrayMethod = rlClass.getMethod("allocateObjectArray",
-                String.class, int.class);
-            java.lang.reflect.Method arraySetSafeMethod = rlClass.getMethod("arraySetSafe",
-                Object[].class, int.class, Object.class);
-
+            // Direct invocation — both classes are in the classlib JAR.
+            // Using direct calls instead of getMethod()/invoke() because TeaVM's
+            // runtime reflection may not register static methods on classlib classes.
             objectAllocator = clazz -> {
                 try {
-                    Object result = allocMethod.invoke(null, clazz);
-                    return objField.get(result);
+                    org.teavm.classlib.reflect.ReflectLink.AllocResult result =
+                        org.teavm.classlib.reflect.ReflectLink.allocateWithReason(clazz);
+                    return result.obj;
                 } catch (Throwable t) { return null; }
             };
 
             fieldWriter = (obj, fieldName, value, schemaTypeDescriptor) -> {
-                setFieldMethod.invoke(null, obj, fieldName, value, schemaTypeDescriptor);
+                org.teavm.classlib.reflect.ReflectLink.setField(obj, fieldName, value, schemaTypeDescriptor);
             };
 
             arrayAllocator = new ArrayAllocator() {
                 @Override
                 public Object[] allocate(String className, int length) {
-                    try { return (Object[]) allocArrayMethod.invoke(null, className, length); }
+                    try { return org.teavm.classlib.reflect.ReflectLink.allocateObjectArray(className, length); }
                     catch (Throwable t) { return null; }
                 }
 
                 @Override
                 public void setSafe(Object[] arr, int index, Object value) {
-                    try { arraySetSafeMethod.invoke(null, arr, index, value); }
+                    try { org.teavm.classlib.reflect.ReflectLink.arraySetSafe(arr, index, value); }
                     catch (Throwable t) { arr[index] = value; }
                 }
             };
-        } catch (Throwable ignored) {
-            // ReflectLink not available — use defaults
+        } catch (Throwable t) {
+            if (SerializationDiagnostics.isDebug()) {
+                System.out.println("[TIS] autoInstallReflectLink FAILED: " + t.getClass().getName() + ": " + t.getMessage());
+            }
         }
     }
 
@@ -373,37 +370,23 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
      * hits zero, the container itself becomes the value delivered upward.
      */
     private static final class Frame {
-        static final int OBJECT_FIELDS = 1;
         static final int OBJECT_ARRAY  = 2;
-        static final int LIST_ELEMENTS = 3;
-        static final int MAP_ENTRIES   = 4;
-        static final int SET_ELEMENTS  = 5;
-        static final int DRAIN         = 8;
         static final int STD_FIELDS    = 9; // Standard format: read fields in descriptor order
 
         int type;
         Object container;
         int remaining;
 
-        // OBJECT_FIELDS / STD_FIELDS / LIST_ELEMENTS:
+        // STD_FIELDS:
         String className;
         String nextFieldName;
-        ClassSchema schema;
 
         // STD_FIELDS: class descriptor hierarchy for field ordering
         ClassDescInfo[] fieldHierarchy;
-        int[] fieldClassStartIdx; // index into allFields for each class in hierarchy
         int totalFieldIndex; // current field index across all hierarchy classes
-
-        // MAP_ENTRIES:
-        Object pendingKey;
-        boolean waitingForValue;
 
         // OBJECT_ARRAY:
         int nextIndex;
-
-        // DRAIN:
-        int drainCount;
     }
 
     private Frame[] frameStack = new Frame[256];
@@ -459,6 +442,16 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
                         frameTop--;
                     }
                     throw new IOException(formatException(e), e);
+                } catch (Throwable t) {
+                    // Catch JS runtime errors (TypeError, etc.) that TeaVM wraps
+                    System.out.println("[TIS-DELIVER] CRASH in deliverToFrame frameTop=" + frameTop
+                        + " frameType=" + frameStack[Math.max(0, frameTop - 1)].type
+                        + " className=" + frameStack[Math.max(0, frameTop - 1)].className
+                        + " err=" + t.getClass().getName() + ": " + t.getMessage());
+                    if (frameTop > 0) {
+                        frameTop--;
+                    }
+                    throw new IOException("deliverToFrame failed: " + t.getMessage(), t);
                 }
             }
         }
@@ -503,8 +496,10 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
             } catch (Throwable ignored) {}
         }
         int tc = readByte();
-        if (totalObjects < 5) {
-            System.out.println("[TIS] readLeafOrStartContainer tc=0x" + Integer.toHexString(tc & 0xFF) + " total=" + totalObjects + " frameTop=" + frameTop + " pos=" + position);
+        if (SerializationDiagnostics.isDebug() && (totalObjects < 5 || frameTop < 2)) {
+            System.out.println("[TIS] readLeafOrStartContainer tc=0x" + Integer.toHexString(tc & 0xFF)
+                + " total=" + totalObjects + " frameTop=" + frameTop + " pos=" + position
+                + " handles=" + handleList.size());
         }
         recordTrace(tc);
         chunkCounter++;  // Count every operation toward the chunk budget
@@ -528,6 +523,8 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
             case TC_CLASS: {
                 // TC_CLASS: classDesc + assign handle
                 readClassDesc();
+                totalObjects++;
+                register(null); // Register handle to match writer's assignObjectHandle
                 return null; // Class objects not fully supported
             }
             case TC_BLOCKDATA:
@@ -547,8 +544,12 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
         for (TypeHandler handler : typeHandlers) {
             if (handler.typeCode() == tc) {
                 handlerCallCount++;
+                // Pre-register placeholder (matches writer's assignObjectHandle before handler.write)
+                int handleIdx = handleList.size();
+                logHandle(null);
+                handleList.add(null);
                 Object result = handler.read(tc, this);
-                register(result);
+                handleList.set(handleIdx, result);
                 return result;
             }
         }
@@ -560,29 +561,9 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
 
     private Object deliverToFrame(Frame f, Object value) throws IOException, ClassNotFoundException {
         switch (f.type) {
-            case Frame.OBJECT_FIELDS: {
-                // Legacy format: field name was stored in nextFieldName
-                try {
-                    setFieldSafely(f.container, f.nextFieldName, value, null);
-                } catch (Exception e) {
-                    if (listener != null) {
-                        listener.onError("setField", f.className, e);
-                    }
-                }
-                f.remaining--;
-                if (f.remaining > 0) {
-                    return NEEDS_CHILDREN;
-                }
-                frameTop--;
-                if (postDeserializeCallback != null) {
-                    postDeserializeCallback.onObjectDeserialized(f.container);
-                }
-                return resolveObject(f.container);
-            }
-
             case Frame.STD_FIELDS: {
                 // Standard format: deliver object field value, then continue
-                if ("game.Game".equals(f.className) && f.totalFieldIndex < 8) {
+                if (SerializationDiagnostics.isDebug() && "game.Game".equals(f.className) && f.totalFieldIndex < 8) {
                     System.out.println("[TIS-FIELD] obj field[" + f.totalFieldIndex + "] "
                         + f.nextFieldName + " val=" + (value != null ? value.getClass().getName() : "null"));
                 }
@@ -608,95 +589,6 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
                 }
                 frameTop--;
                 return arr;
-            }
-
-            case Frame.LIST_ELEMENTS: {
-                // container is always ArrayList (created in startList)
-                @SuppressWarnings("unchecked")
-                ArrayList<Object> list = (ArrayList<Object>) f.container;
-                try {
-                    list.add(value);
-                } catch (Exception e) {
-                    if (listener != null) {
-                        listener.onError("listAdd",
-                            value != null ? value.getClass().getName() : "null", e);
-                    }
-                }
-                f.remaining--;
-                if (f.remaining > 0) {
-                    return NEEDS_CHILDREN;
-                }
-                frameTop--;
-                Object reconstructed = reconstructIfNonArrayList(f.className, list);
-                if (reconstructed != list) {
-                    patchHandle(list, reconstructed);
-                }
-                return reconstructed;
-            }
-
-            case Frame.MAP_ENTRIES: {
-                // container is always HashMap (created in startMap)
-                @SuppressWarnings("unchecked")
-                HashMap<Object, Object> map = (HashMap<Object, Object>) f.container;
-                if (!f.waitingForValue) {
-                    f.pendingKey = value;
-                    f.waitingForValue = true;
-                    return NEEDS_CHILDREN;
-                }
-                try {
-                    map.put(f.pendingKey, value);
-                } catch (Exception e) {
-                    if (listener != null) {
-                        listener.onError("mapPut",
-                            value != null ? value.getClass().getName() : "null", e);
-                    }
-                }
-                f.waitingForValue = false;
-                f.remaining--;
-                if (f.remaining > 0) {
-                    return NEEDS_CHILDREN;
-                }
-                frameTop--;
-                Object reconstructed = reconstructIfNonHashMap(f.className, map);
-                if (reconstructed != map) {
-                    patchHandle(map, reconstructed);
-                }
-                return reconstructed;
-            }
-
-            case Frame.SET_ELEMENTS: {
-                // container is always HashSet (created in startSet)
-                @SuppressWarnings("unchecked")
-                java.util.HashSet<Object> set = (java.util.HashSet<Object>) f.container;
-                set.add(value);
-                f.remaining--;
-                if (f.remaining > 0) {
-                    return NEEDS_CHILDREN;
-                }
-                frameTop--;
-                Object reconstructed = reconstructIfNonHashSet(f.className, set);
-                if (reconstructed != set) {
-                    patchHandle(set, reconstructed);
-                }
-                return reconstructed;
-            }
-
-            case Frame.DRAIN: {
-                if (listener != null) {
-                    listener.onReadObject("drain", frameTop);
-                }
-                f.drainCount--;
-                if (f.drainCount > 0) {
-                    // Must consume the next field name from the stream to keep
-                    // the cursor aligned.  The wire format alternates
-                    // fieldName(UTF) + fieldValue, so after draining one
-                    // value we need to read the next name before the next
-                    // readObject() call delivers the subsequent value.
-                    readUTF();
-                    return NEEDS_CHILDREN;
-                }
-                frameTop--;
-                return null;
             }
 
             default:
@@ -770,7 +662,18 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
 
     // ── Reference tracking ───────────────────────────────────────────────────
 
+    private void logHandle(Object obj) {
+        if (SerializationDiagnostics.isDebug()) {
+            int idx = handleList.size();
+            String type = obj == null ? "null" : obj.getClass().getName();
+            if (obj instanceof ClassDescInfo) type = "CD:" + ((ClassDescInfo) obj).className;
+            else if (obj instanceof String) type = "S:" + ((String) obj).substring(0, Math.min(20, ((String) obj).length()));
+            System.out.println("[TIS-REG] handle=" + idx + " type=" + type + " pos=" + position + " totalObj=" + totalObjects);
+        }
+    }
+
     private void register(Object obj) {
+        logHandle(obj);
         handleList.add(obj);
     }
 
@@ -809,506 +712,7 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
     }
 
     // ── Container starters ───────────────────────────────────────────────────
-
-    private Object startArray() throws IOException, ClassNotFoundException {
-        String className = readUTF();
-        int length = readInt();
-        if (length < 0 || length > 10_000_000) {
-            throw new IOException("Array length out of range: " + length);
-        }
-
-        // Primitive arrays -- read inline, no frame needed.
-        switch (className) {
-            case "[B": {
-                byte[] a = new byte[length];
-                register(a);
-                readFully(a);
-                return a;
-            }
-            case "[I": {
-                int[] a = new int[length];
-                register(a);
-                for (int i = 0; i < length; i++) {
-                    a[i] = readInt();
-                }
-                return a;
-            }
-            case "[J": {
-                long[] a = new long[length];
-                register(a);
-                for (int i = 0; i < length; i++) {
-                    a[i] = readLong();
-                }
-                return a;
-            }
-            case "[Z": {
-                boolean[] a = new boolean[length];
-                register(a);
-                for (int i = 0; i < length; i++) {
-                    a[i] = readByte() != 0;
-                }
-                return a;
-            }
-            case "[D": {
-                double[] a = new double[length];
-                register(a);
-                for (int i = 0; i < length; i++) {
-                    a[i] = readDouble();
-                }
-                return a;
-            }
-            case "[F": {
-                float[] a = new float[length];
-                register(a);
-                for (int i = 0; i < length; i++) {
-                    a[i] = readFloat();
-                }
-                return a;
-            }
-            case "[S": {
-                short[] a = new short[length];
-                register(a);
-                for (int i = 0; i < length; i++) {
-                    a[i] = (short) readShort();
-                }
-                return a;
-            }
-            case "[C": {
-                char[] a = new char[length];
-                register(a);
-                for (int i = 0; i < length; i++) {
-                    a[i] = (char) readChar();
-                }
-                return a;
-            }
-            default:
-                break;
-        }
-
-        // Object array -- create a typed array so the result is assignable to
-        // the field's declared array type.
-        Object[] arr = allocateObjectArray(className, length);
-        register(arr);
-        if (length == 0) {
-            return arr;
-        }
-        Frame f = pushFrame();
-        f.type = Frame.OBJECT_ARRAY;
-        f.container = arr;
-        f.remaining = length;
-        f.nextIndex = 0;
-        return NEEDS_CHILDREN;
-    }
-
-    private Object startList() throws IOException {
-        String listClassName = readUTF();
-        int size = readInt();
-        if (size < 0 || size > 10_000_000) {
-            throw new IOException("List size out of range: " + size);
-        }
-        ArrayList<Object> list = new ArrayList<>(size);
-        register(list);
-        if (size == 0) {
-            Object reconstructed = reconstructIfNonArrayList(listClassName, list);
-            if (reconstructed != list) {
-                patchHandle(list, reconstructed);
-            }
-            return reconstructed;
-        }
-        Frame f = pushFrame();
-        f.type = Frame.LIST_ELEMENTS;
-        f.container = list;
-        f.remaining = size;
-        f.className = listClassName;
-        return NEEDS_CHILDREN;
-    }
-
-    /**
-     * After reading all elements into an ArrayList, try to reconstruct the
-     * declared iterable type (e.g. FastArrayList) via reflection. Falls back
-     * to the ArrayList if construction fails.
-     */
-    private static Object reconstructIfNonArrayList(String className, ArrayList<Object> elements) {
-        if ("java.util.ArrayList".equals(className) || className.isEmpty()) {
-            return elements;
-        }
-        if ("java.util.Collections$UnmodifiableList".equals(className)
-                || "java.util.Collections$UnmodifiableRandomAccessList".equals(className)
-                || className.startsWith("java.util.Collections$")) {
-            // Unmodifiable wrappers are package-private inner classes — can't reconstruct.
-            // Return the ArrayList as-is; callers will see a mutable list but data is preserved.
-            return elements;
-        }
-        try {
-            Class<?> declaredType = Class.forName(className);
-            Object container = declaredType.getDeclaredConstructor().newInstance();
-            java.lang.reflect.Method addMethod = declaredType.getMethod("add", Object.class);
-            for (Object item : elements) {
-                addMethod.invoke(container, item);
-            }
-            return container;
-        } catch (Throwable t) {
-            return elements;
-        }
-    }
-
-    private static Object reconstructIfNonHashMap(String className, HashMap<Object, Object> elements) {
-        if ("java.util.HashMap".equals(className) || className.isEmpty()) {
-            return elements;
-        }
-        if ("java.util.EnumMap".equals(className)) {
-            try {
-                if (!elements.isEmpty()) {
-                    Object firstKey = null;
-                    for (Object k : elements.keySet()) { firstKey = k; break; }
-                    if (firstKey != null) {
-                        @SuppressWarnings("unchecked")
-                        EnumMap rawMap = new EnumMap(firstKey.getClass());
-                        rawMap.putAll(elements);
-                        return rawMap;
-                    }
-                }
-                // Empty EnumMap — use the EnumMap(Map) constructor with an empty HashMap
-                // to avoid needing the enum Class for the no-arg path.
-                // Fall through to HashMap fallback for empty EnumMaps.
-            } catch (Throwable t) {
-                // EnumMap(Class) may fail if TGenericEnumSet.getConstants() returns null
-                // on backends without full enum reflection. Fall through to HashMap.
-            }
-            return elements;
-        }
-        if ("java.util.LinkedHashMap".equals(className)) {
-            LinkedHashMap<Object, Object> lhm = new LinkedHashMap<>(elements.size() * 2);
-            lhm.putAll(elements);
-            return lhm;
-        }
-        if ("java.util.TreeMap".equals(className)) {
-            TreeMap<Object, Object> tm = new TreeMap<>();
-            try {
-                tm.putAll(elements);
-                return tm;
-            } catch (Throwable t) {
-                return elements;
-            }
-        }
-        if (className.startsWith("java.util.Collections$")) {
-            return elements;
-        }
-        try {
-            Class<?> declaredType = Class.forName(className);
-            Object container = declaredType.getDeclaredConstructor().newInstance();
-            if (container instanceof Map) {
-                ((Map) container).putAll(elements);
-            }
-            return container;
-        } catch (Throwable t) {
-            return elements;
-        }
-    }
-
-    private Object startMap() throws IOException {
-        String mapClassName = readUTF();
-        int size = readInt();
-        if (size < 0 || size > 10_000_000) {
-            throw new IOException("Map size out of range: " + size);
-        }
-        HashMap<Object, Object> map = new HashMap<>(size * 2);
-        register(map);
-        if (size == 0) {
-            Object reconstructed = reconstructIfNonHashMap(mapClassName, map);
-            if (reconstructed != map) {
-                patchHandle(map, reconstructed);
-            }
-            return reconstructed;
-        }
-        Frame f = pushFrame();
-        f.type = Frame.MAP_ENTRIES;
-        f.container = map;
-        f.remaining = size;
-        f.className = mapClassName;
-        f.waitingForValue = false;
-        return NEEDS_CHILDREN;
-    }
-
-    private Object startSet() throws IOException {
-        String setClassName = readUTF();
-        int size = readInt();
-        if (size < 0 || size > 10_000_000) {
-            throw new IOException("Set size out of range: " + size);
-        }
-        java.util.HashSet<Object> set = new HashSet<>(size * 2);
-        register(set);
-        if (size == 0) {
-            Object reconstructed = reconstructIfNonHashSet(setClassName, set);
-            if (reconstructed != set) {
-                patchHandle(set, reconstructed);
-            }
-            return reconstructed;
-        }
-        Frame f = pushFrame();
-        f.type = Frame.SET_ELEMENTS;
-        f.container = set;
-        f.remaining = size;
-        f.className = setClassName;
-        return NEEDS_CHILDREN;
-    }
-
-    private static Object reconstructIfNonHashSet(String className, HashSet<Object> elements) {
-        if ("java.util.HashSet".equals(className) || className.isEmpty()) {
-            return elements;
-        }
-        if ("java.util.LinkedHashSet".equals(className)) {
-            java.util.LinkedHashSet<Object> lhs = new java.util.LinkedHashSet<>(elements.size() * 2);
-            lhs.addAll(elements);
-            return lhs;
-        }
-        if ("java.util.TreeSet".equals(className)) {
-            java.util.TreeSet<Object> ts = new java.util.TreeSet<>();
-            // TreeSet requires Comparable elements — fall back to HashSet if not
-            try {
-                ts.addAll(elements);
-                return ts;
-            } catch (Throwable t) {
-                return elements;
-            }
-        }
-        if (className.startsWith("java.util.Collections$")) {
-            // Unmodifiable wrappers — can't reconstruct, return as HashSet
-            return elements;
-        }
-        try {
-            Class<?> declaredType = Class.forName(className);
-            Object container = declaredType.getDeclaredConstructor().newInstance();
-            if (container instanceof java.util.Set) {
-                ((java.util.Set<Object>) container).addAll(elements);
-            }
-            return container;
-        } catch (Throwable t) {
-            return elements;
-        }
-    }
-
-    private Object startCustomObject() throws IOException, ClassNotFoundException {
-        String className = readUTF();
-        int fieldCount = readShort();
-
-        // ── Singleton guard ────────────────────────────────────────────────
-        // Classes like grammar.Grammar use a static singleton and must not
-        // be re-instantiated.  Their constructors have side-effects that
-        // corrupt global state.  Drain the field bytes and register null.
-        if (isSingletonClassName(className)) {
-            totalObjects++;
-            register(null);
-            if (fieldCount > 0) {
-                readUTF(); // consume first field name
-                Frame f = pushFrame();
-                f.type = Frame.DRAIN;
-                f.drainCount = fieldCount;
-                return NEEDS_CHILDREN;
-            }
-            return null;
-        }
-
-        ClassSchema schema = schemaManifest.get(className);
-
-        // ── Stage 1: Class.forName (cached) ──────────────────────────────
-        if (SerializationDiagnostics.isDebug() && (totalObjects % 500) == 0) {
-            System.out.println("[TIS] Allocating object #" + totalObjects + " class=" + className);
-        }
-        Class<?> clazz = classForNameCache.get(className);
-        if (clazz == null && !classForNameCache.containsKey(className)) {
-            if (SerializationDiagnostics.isDebug() && totalObjects < 5) System.out.println("[TIS] Class.forName(" + className + ")...");
-            try {
-                clazz = Class.forName(className);
-                if (SerializationDiagnostics.isDebug() && totalObjects < 5) System.out.println("[TIS] Class.forName(" + className + ") done");
-            } catch (Throwable e) {
-                if (SerializationDiagnostics.isDebug() && totalObjects < 5) System.out.println("[TIS] Class.forName(" + className + ") FAILED: " + e.getMessage());
-                if (listener != null) {
-                    String reason = e.getClass().getName() + ": " + e.getMessage();
-                    listener.onError("Class.forName", className,
-                        new RuntimeException(reason));
-                }
-            }
-            classForNameCache.put(className, clazz);
-        }
-
-        // ── Stage 2: Allocate ─────────────────────────────────────────────
-        Object obj = null;
-        if (clazz != null) {
-            if (SerializationDiagnostics.isDebug() && totalObjects < 5) System.out.println("[TIS] allocateInstance(" + className + ")...");
-            try {
-                obj = allocateInstance(clazz);
-                if (SerializationDiagnostics.isDebug() && totalObjects < 5) System.out.println("[TIS] allocateInstance(" + className + ") done, obj=" + (obj != null));
-            } catch (Exception e) {
-                if (listener != null) {
-                    listener.onError("allocate", className, e);
-                }
-            } catch (Throwable t) {
-                if (listener != null) {
-                    listener.onError("allocate", className,
-                        new RuntimeException(t.getClass().getName() + ": " + t.getMessage()));
-                }
-            }
-        }
-
-        // ── Stage 3: Structural-failure policy ────────────────────────────
-        // When we cannot materialise an object whose fields the writer
-        // committed, DRAIN the field bytes + register(null) to keep the
-        // stream valid.
-        totalObjects++;
-        if (obj == null) {
-            register(null);
-            if (fieldCount > 0) {
-                // The wire format writes N fieldName(UTF)+value pairs.
-                // readUTF() for the first field name has NOT been consumed
-                // yet (unlike the obj != null path which reads it at line
-                // ~794).  Read it here so the DRAIN handler's subsequent
-                // readUTF() calls stay aligned.
-                readUTF(); // consume firstName
-                Frame f = pushFrame();
-                f.type = Frame.DRAIN;
-                f.drainCount = fieldCount;
-                return NEEDS_CHILDREN;
-            }
-            return null;
-        }
-
-        register(obj);
-
-        if (fieldCount == 0) {
-            return resolveObject(obj);
-        }
-
-        String firstName = readUTF();
-        Frame f = pushFrame();
-        f.type = Frame.OBJECT_FIELDS;
-        f.container = obj;
-        f.remaining = fieldCount;
-        f.className = className;
-        f.schema = schema;
-        f.nextFieldName = firstName;
-
-        if (schema != null) {
-            if (schema.fieldNames.length != fieldCount) {
-                if (listener != null) {
-                    listener.onSchemaDrift(className,
-                        "fieldCount: expected " + schema.fieldNames.length
-                        + ", got " + fieldCount);
-                }
-            }
-            if (schema.fieldNames.length > 0
-                    && !firstName.equals(schema.fieldNames[0])) {
-                if (listener != null) {
-                    listener.onSchemaDrift(className,
-                        "field[0]: expected " + schema.fieldNames[0]
-                        + ", got " + firstName);
-                }
-            }
-        }
-
-        if (listener != null) {
-            listener.onReadObject(className, frameTop);
-        }
-
-        return NEEDS_CHILDREN;
-    }
-
-    // ── Enum reader ──────────────────────────────────────────────────────────
-
-    private Object readEnum() throws IOException {
-        String className = readUTF();
-        String constName = readUTF();
-
-        String cacheKey = className + "#" + constName;
-        Object cached = enumConstantCache.get(cacheKey);
-        if (cached != null) {
-            register(cached);
-            return cached;
-        }
-
-        Class<?> enumClass = null;
-        try {
-            enumClass = Class.forName(className);
-        } catch (Throwable ignored) {
-        }
-
-        if (enumClass == null) {
-            String name = className;
-            while (enumClass == null) {
-                int dollar = name.lastIndexOf('$');
-                if (dollar < 0) {
-                    break;
-                }
-                String suffix = name.substring(dollar + 1);
-                boolean allDigits = !suffix.isEmpty();
-                for (int i = 0; i < suffix.length(); i++) {
-                    if (!Character.isDigit(suffix.charAt(i))) {
-                        allDigits = false;
-                        break;
-                    }
-                }
-                if (!allDigits) {
-                    break;
-                }
-                name = name.substring(0, dollar);
-                try {
-                    enumClass = Class.forName(name);
-                } catch (Throwable ignored) {
-                }
-            }
-        }
-
-        if (enumClass != null && enumClass.isEnum()) {
-            String classKey = enumClass.getName();
-            try {
-                // Use cached valueOf(Class,String) Method if available
-                java.lang.reflect.Method valueOf = enumValueOfCache.get(classKey);
-                if (valueOf == null && !enumValueOfCache.containsKey(classKey)) {
-                    valueOf = enumClass.getMethod("valueOf", Class.class, String.class);
-                    enumValueOfCache.put(classKey, valueOf);
-                }
-                if (valueOf != null) {
-                    Object v = valueOf.invoke(null, enumClass, constName);
-                    enumConstantCache.put(cacheKey, v);
-                    register(v);
-                    return v;
-                }
-            } catch (Throwable t) {
-                try {
-                    // Use cached valueOf(String) Method if available
-                    java.lang.reflect.Method valueOf1 = enumValueOfCache.get(classKey + "#1");
-                    if (valueOf1 == null && !enumValueOfCache.containsKey(classKey + "#1")) {
-                        valueOf1 = enumClass.getMethod("valueOf", String.class);
-                        enumValueOfCache.put(classKey + "#1", valueOf1);
-                    }
-                    if (valueOf1 != null) {
-                        Object v = valueOf1.invoke(null, constName);
-                        enumConstantCache.put(cacheKey, v);
-                        register(v);
-                        return v;
-                    }
-                } catch (Throwable t2) {
-                }
-            }
-        }
-        register(null);
-        return null;
-    }
-
-    // ── Special-cased library types ──────────────────────────────────────────
-
-    private Object readBitSet() throws IOException {
-        int card = readInt();
-        if (card < 0 || card > 10_000_000) {
-            throw new IOException("BitSet cardinality out of range: " + card);
-        }
-        BitSet bs = new BitSet();
-        register(bs);
-        for (int i = 0; i < card; i++) {
-            bs.set(readInt());
-        }
-        return bs;
-    }
+    // (Legacy format methods removed — only standard format is now supported)
 
     // ═════════════════════════════════════════════════════════════════════════
     //  Reflection helpers (standard java.lang.reflect)
@@ -1769,22 +1173,6 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
     private static final byte SC_BLOCK_DATA      = TObjectOutputStream.SC_BLOCK_DATA;
     private static final byte SC_ENUM            = TObjectOutputStream.SC_ENUM;
 
-    // Legacy type codes (for backward compat if encountering old-format streams)
-    private static final byte TC_LIST      = TObjectOutputStream.TC_LIST;
-    private static final byte TC_MAP       = TObjectOutputStream.TC_MAP;
-    private static final byte TC_SET       = TObjectOutputStream.TC_SET;
-    private static final byte TC_BITSET    = TObjectOutputStream.TC_BITSET;
-    private static final byte TC_SCHEMA    = TObjectOutputStream.TC_SCHEMA;
-    private static final byte TC_LONGSTRING = 0x62;
-    private static final byte TC_INTEGER   = TObjectOutputStream.TC_INTEGER;
-    private static final byte TC_LONG      = TObjectOutputStream.TC_LONG;
-    private static final byte TC_DOUBLE    = TObjectOutputStream.TC_DOUBLE;
-    private static final byte TC_FLOAT     = TObjectOutputStream.TC_FLOAT;
-    private static final byte TC_BOOLEAN   = TObjectOutputStream.TC_BOOLEAN;
-    private static final byte TC_SHORT     = TObjectOutputStream.TC_SHORT;
-    private static final byte TC_CHAR      = TObjectOutputStream.TC_CHAR;
-    private static final byte TC_BYTE      = TObjectOutputStream.TC_BYTE;
-
     // ── Class descriptor cache ──────────────────────────────────────────────
 
     /** Parsed class descriptor from TC_CLASSDESC. */
@@ -1815,8 +1203,29 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
             if (idx >= 0 && idx < handleList.size()) {
                 Object obj = handleList.get(idx);
                 if (obj instanceof ClassDescInfo) return (ClassDescInfo) obj;
+                // Diagnostic: what did we find instead?
+                StringBuilder diag = new StringBuilder();
+                diag.append("Bad class desc reference: 0x").append(Integer.toHexString(handle))
+                    .append(" idx=").append(idx).append(" found ").append(obj.getClass().getName())
+                    .append(" totalHandles=").append(handleList.size())
+                    .append(" totalObjects=").append(totalObjects)
+                    .append(" pos=").append(position);
+                // Show nearby handles
+                diag.append(" nearby=[");
+                for (int j = Math.max(0, idx - 3); j <= Math.min(handleList.size() - 1, idx + 3); j++) {
+                    if (j > Math.max(0, idx - 3)) diag.append(", ");
+                    Object h = handleList.get(j);
+                    diag.append(j).append("=");
+                    if (h instanceof ClassDescInfo) diag.append("CD:").append(((ClassDescInfo)h).className);
+                    else if (h instanceof String) diag.append("S:").append(((String)h).substring(0, Math.min(30, ((String)h).length())));
+                    else if (h == null) diag.append("null");
+                    else diag.append(h.getClass().getSimpleName());
+                }
+                diag.append("]");
+                throw new IOException(diag.toString());
             }
-            throw new IOException("Bad class desc reference: 0x" + Integer.toHexString(handle));
+            throw new IOException("Bad class desc reference: 0x" + Integer.toHexString(handle)
+                + " idx=" + idx + " totalHandles=" + handleList.size());
         }
         if (tc == TC_CLASSDESC) {
             return readNewClassDesc();
@@ -1833,6 +1242,7 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
         desc.flags = (byte) readByte();
 
         // Register handle BEFORE reading remaining content (matches writer order)
+        logHandle(desc);
         handleList.add(desc);
 
         int fieldCount = readShort();
@@ -1865,6 +1275,7 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
         int tc = readByte();
         if (tc == TC_STRING) {
             String s = readUTF();
+            logHandle(s);
             handleList.add(s); // register handle
             return s;
         }
@@ -1874,6 +1285,19 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
             if (idx >= 0 && idx < handleList.size()) {
                 Object obj = handleList.get(idx);
                 if (obj instanceof String) return (String) obj;
+                if (SerializationDiagnostics.isDebug()) {
+                    System.out.println("[TIS-BADREF] readTypeString got TC_REFERENCE handle=0x"
+                        + Integer.toHexString(handle) + " idx=" + idx
+                        + " but found " + obj.getClass().getName() + " not String"
+                        + " totalHandles=" + handleList.size());
+                }
+            } else {
+                if (SerializationDiagnostics.isDebug()) {
+                    System.out.println("[TIS-BADREF] readTypeString got TC_REFERENCE handle=0x"
+                        + Integer.toHexString(handle) + " idx=" + idx
+                        + " but handleList.size()=" + handleList.size()
+                        + " pos=" + position);
+                }
             }
             throw new IOException("Bad string reference: 0x" + Integer.toHexString(handle));
         }
@@ -1923,6 +1347,7 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
         if (desc == null) {
             throw new IOException("TC_OBJECT with null class desc at position " + (position - 1));
         }
+        String pendingClassName = desc.className; // capture for error reporting
 
         // Check flags for special handling
         boolean isExternalizable = (desc.flags & SC_EXTERNALIZABLE) != 0;
@@ -1939,8 +1364,7 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
 
         String className = desc.className;
 
-        // Diagnostic: log first few objects
-        if (totalObjects < 3) {
+        if (SerializationDiagnostics.isDebug()) {
             int tf = 0;
             for (ClassDescInfo cdi : hierarchy) tf += cdi.fieldNames.length;
             System.out.println("[TIS-STD] readStdObject #" + totalObjects + " class=" + className
@@ -1989,8 +1413,14 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
             try {
                 obj = allocateInstance(clazz);
             } catch (Exception e) {
+                if (SerializationDiagnostics.isDebug()) {
+                    System.out.println("[TIS-ALLOC] allocateInstance threw for " + className + ": " + e.getMessage());
+                }
                 if (listener != null) listener.onError("allocate", className, e);
             } catch (Throwable t) {
+                if (SerializationDiagnostics.isDebug()) {
+                    System.out.println("[TIS-ALLOC] allocateInstance THREW for " + className + ": " + t.getClass().getName() + ": " + t.getMessage());
+                }
                 if (listener != null) listener.onError("allocate", className,
                     new RuntimeException(t.getClass().getName() + ": " + t.getMessage()));
             }
@@ -2000,6 +1430,9 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
 
         // ── Stage 3: Structural failure — drain ──────────────────────
         if (obj == null) {
+            if (SerializationDiagnostics.isDebug()) {
+                System.out.println("[TIS-STD] ALLOC FAILED for " + className + " — draining " + hierarchy.size() + " classes");
+            }
             register(null);
             drainObjectFields(hierarchy, isWriteMethod || isExternalizable);
             return null;
@@ -2038,8 +1471,20 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
             return resolveObject(obj);
         }
 
+        if (SerializationDiagnostics.isDebug() && "game.Game".equals(className)) {
+            System.out.println("[TIS-STD] About to call processStdFieldsFrame for Game"
+                + " totalFields=" + totalFields + " obj=" + (obj != null) + " frameTop=" + frameTop);
+        }
+
         // Process any leading primitive fields immediately
-        return processStdFieldsFrame();
+        try {
+            return processStdFieldsFrame();
+        } catch (Throwable t) {
+            System.out.println("[TIS-STD] CRASH in readStdObject class=" + pendingClassName
+                + " totalObjects=" + totalObjects + " pos=" + position
+                + " err=" + t.getClass().getName() + ": " + t.getMessage());
+            throw t;
+        }
     }
 
     /**
@@ -2050,8 +1495,7 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
         Frame f = frameStack[frameTop - 1];
         ClassDescInfo[] hierarchy = f.fieldHierarchy;
 
-        // Diagnostic: first invocation for Game
-        if ("game.Game".equals(f.className) && f.totalFieldIndex == 0) {
+        if (SerializationDiagnostics.isDebug() && "game.Game".equals(f.className) && f.totalFieldIndex == 0) {
             System.out.println("[TIS-STD] processStdFieldsFrame START for game.Game remaining=" + f.remaining
                 + " hierarchy=" + hierarchy.length + " fieldCounts="
                 + java.util.Arrays.toString(java.util.stream.IntStream.range(0, hierarchy.length)
@@ -2082,7 +1526,7 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
             if (isPrimitiveTypeCode(ftc)) {
                 // Read and set primitive immediately
                 Object value = readPrimitiveValue(ftc);
-                if ("game.Game".equals(f.className) && f.totalFieldIndex < 8) {
+                if (SerializationDiagnostics.isDebug() && "game.Game".equals(f.className) && f.totalFieldIndex < 8) {
                     System.out.println("[TIS-FIELD] prim field[" + f.totalFieldIndex + "] "
                         + currentClass.className + "." + fieldName + " type=" + (char)ftc
                         + " val=" + value);
@@ -2097,6 +1541,10 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
             } else {
                 // Object field — store field name and return NEEDS_CHILDREN
                 f.nextFieldName = fieldName;
+                if (SerializationDiagnostics.isDebug() && "game.Game".equals(f.className) && f.totalFieldIndex < 8) {
+                    System.out.println("[TIS-FIELD] obj field[" + f.totalFieldIndex + "] " + fieldName
+                        + " type=" + typeDesc + " handles=" + handleList.size() + " pos=" + position);
+                }
                 return NEEDS_CHILDREN;
             }
         }
@@ -2358,20 +1806,38 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
     }
 
     private Object readEnumMapStd(ArrayList<ClassDescInfo> hierarchy) throws IOException, ClassNotFoundException {
+        // CRITICAL: The writer assigns the EnumMap object handle BEFORE writing
+        // the keyType field value. We must register a placeholder handle at the
+        // same position, then patch it after creating the EnumMap.
+        int mapHandleIdx = handleList.size();
+        totalObjects++;
+        logHandle(null);
+        handleList.add(null); // placeholder — patched below
+
         // Read default field: Class keyType
         Class<?> keyType = null;
         for (ClassDescInfo cdi : hierarchy) {
             for (int i = 0; i < cdi.fieldNames.length; i++) {
                 if ("keyType".equals(cdi.fieldNames[i])) {
-                    // Read the Class object (TC_CLASS or TC_NULL)
                     keyType = readClassField();
                 }
             }
         }
-        // Create EnumMap and register
-        EnumMap map = keyType != null ? new EnumMap(keyType) : new EnumMap(Enum.class);
-        totalObjects++;
-        register(map);
+
+        // Create EnumMap and patch handle
+        EnumMap map;
+        try {
+            map = keyType != null ? new EnumMap(keyType) : null;
+        } catch (Throwable t) {
+            map = null; // defer creation
+        }
+        // If keyType was null or EnumMap creation failed, defer creation
+        boolean deferredCreation = (map == null);
+
+        if (!deferredCreation) {
+            handleList.set(mapHandleIdx, map);
+        }
+
         // Block data: size + key-value pairs
         int tc = readByte();
         int size = 0;
@@ -2383,7 +1849,33 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
         for (int i = 0; i < size; i++) {
             Object key = readObjectUnframed();
             Object value = readObjectUnframed();
-            map.put(key, value);
+            // Deferred creation: create EnumMap using first key's declaring class
+            if (deferredCreation && map == null && key instanceof Enum) {
+                try {
+                    Class<?> kt = ((Enum<?>) key).getDeclaringClass();
+                    map = new EnumMap(kt);
+                } catch (Throwable t) {
+                    // Fall back to HashMap
+                }
+                if (map != null) {
+                    handleList.set(mapHandleIdx, map); // patch placeholder, no extra handle
+                }
+            }
+            if (map != null) {
+                try {
+                    map.put(key, value);
+                } catch (Throwable t) {
+                    // Ignore put failures
+                }
+            }
+        }
+        // Handle empty EnumMap with null keyType — patch placeholder with HashMap
+        if (deferredCreation && map == null) {
+            Object fallback = new HashMap();
+            handleList.set(mapHandleIdx, fallback); // patch placeholder, no extra handle
+            // Read TC_ENDBLOCKDATA
+            readByte();
+            return fallback;
         }
         // Read TC_ENDBLOCKDATA
         readByte();
@@ -2391,17 +1883,22 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
     }
 
     private Object readBitSetStd(ArrayList<ClassDescInfo> hierarchy) throws IOException, ClassNotFoundException {
+        // Pre-register BitSet handle (matches writer's assignObjectHandle before field values)
+        int bsHandleIdx = handleList.size();
+        totalObjects++;
+        logHandle(null);
+        handleList.add(null); // placeholder
+
         // Read default field: long[] bits
         long[] words = null;
         for (ClassDescInfo cdi : hierarchy) {
             for (int i = 0; i < cdi.fieldNames.length; i++) {
                 if ("bits".equals(cdi.fieldNames[i])) {
-                    // The bits field is a long[] — read as an object
                     words = (long[]) readObjectUnframed();
                 }
             }
         }
-        // Create BitSet and register
+        // Create BitSet and patch handle
         BitSet bs = new BitSet();
         if (words != null) {
             for (int i = 0; i < words.length; i++) {
@@ -2413,23 +1910,23 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
                 }
             }
         }
-        totalObjects++;
-        register(bs);
+        handleList.set(bsHandleIdx, bs);
         // SC_WRITE_METHOD: read TC_ENDBLOCKDATA
         readByte();
         return bs;
     }
 
-    /** Read a Class field value (TC_CLASS + classDesc or TC_NULL). */
+    /** Read a Class field value (TC_CLASS + classDesc or TC_NULL).
+     *  Used by EnumMap keyType field. Does NOT register a handle for the Class
+     *  object — the writer's writeEnumMapStd writes TC_CLASS + classDesc without
+     *  assigning a Class object handle. */
     private Class<?> readClassField() throws IOException {
         int tc = readByte();
         if (tc == TC_NULL) return null;
         if (tc == TC_CLASS) {
             ClassDescInfo desc = readClassDesc();
             if (desc == null) return null;
-            // Register the class object handle
-            totalObjects++;
-            register(null); // Class objects not fully supported
+            // No handle registration — writer doesn't assign one for inline Class fields
             try {
                 return Class.forName(desc.className);
             } catch (ClassNotFoundException e) {
@@ -2446,15 +1943,19 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
         ClassDescInfo desc = readClassDesc();
         String className = desc != null ? desc.className : "unknown";
 
-        // Read enum constant name (TC_STRING or TC_REFERENCE)
+        // Pre-register enum handle BEFORE reading string (matches writer's
+        // assignObjectHandle before writeStandardString)
+        int enumHandleIdx = handleList.size();
+        totalObjects++;
+        logHandle(null);
+        handleList.add(null); // placeholder
+
+        // Read enum constant name (TC_STRING or TC_REFERENCE) — registers string handle
         String constName = readTypeString();
 
-        // Resolve the enum constant
+        // Resolve the enum constant and patch handle
         Object result = resolveEnumConstant(className, constName);
-
-        // Register the enum object handle (after string, matching writer order)
-        totalObjects++;
-        register(result);
+        handleList.set(enumHandleIdx, result);
         return result;
     }
 
@@ -2491,34 +1992,6 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
         SimpleObjectInput(java.io.InputStream in) { super(in); }
         public Object readObject() { throw new UnsupportedOperationException(); }
         public void close() {}
-    }
-
-    // ── Schema manifest ──────────────────────────────────────────────────
-
-    private static final class ClassSchema {
-        final String[] fieldNames;
-        final String[] fieldTypeDescriptors;
-        ClassSchema(String[] fieldNames, String[] fieldTypeDescriptors) {
-            this.fieldNames = fieldNames;
-            this.fieldTypeDescriptors = fieldTypeDescriptors;
-        }
-    }
-
-    private final Map<String, ClassSchema> schemaManifest = new HashMap<>();
-
-    private void readSchemaInline() throws IOException {
-        int classCount = readShort();
-        for (int i = 0; i < classCount; i++) {
-            String className = readUTF();
-            int fieldCount = readShort();
-            String[] names = new String[fieldCount];
-            String[] types = new String[fieldCount];
-            for (int j = 0; j < fieldCount; j++) {
-                names[j] = readUTF();
-                types[j] = readUTF();
-            }
-            schemaManifest.put(className, new ClassSchema(names, types));
-        }
     }
 
     /**

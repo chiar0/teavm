@@ -130,7 +130,12 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
     private TSerializationListener listener;
     private static boolean includeTransientFields;
     private static int lastTotalObjectCount;
+    private static int lastHandleCount;
     private int bytePos;
+
+    // Handle trace: records type tag for every handle assignment
+    private static ArrayList<String> handleTrace = new ArrayList<>();
+    private static boolean traceEnabled;
 
     // Diagnostic ring buffer
     private static int diagWriteCount;
@@ -216,6 +221,32 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
 
     public static int getLastTotalObjectCount() {
         return lastTotalObjectCount;
+    }
+
+    public static int getLastHandleCount() {
+        return lastHandleCount;
+    }
+
+    public static void enableHandleTrace(boolean enable) {
+        traceEnabled = enable;
+        if (enable) handleTrace = new ArrayList<>();
+    }
+
+    public static String getHandleTraceJSON() {
+        if (handleTrace.isEmpty()) return "[]";
+        StringBuilder sb = new StringBuilder("[");
+        int len = handleTrace.size();
+        int limit = Math.min(len, 50000);
+        for (int i = 0; i < limit; i++) {
+            if (i > 0) sb.append(',');
+            sb.append('"').append(handleTrace.get(i)).append('"');
+        }
+        sb.append(']');
+        return sb.toString();
+    }
+
+    private static void traceHandle(String tag) {
+        if (traceEnabled) handleTrace.add(tag);
     }
 
     public static String dumpDiagRing() {
@@ -307,17 +338,27 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
         // ── Pre-register for circular reference detection (handle assigned later) ──
         objectRefs.put(obj, -1); // sentinel: "being written"
 
-        // ── TypeHandler ──
+        Class<?> clazz = obj.getClass();
+        String className = clazz.getName();
+
+        // ── Externalizable (Trove, ChunkSet, etc.) — BEFORE type handlers ──
+        // Externalizable objects must use standard format, not custom type codes,
+        // so the reader can decode them without custom type handlers.
+        if (obj instanceof java.io.Externalizable) {
+            writeExternalizable((java.io.Externalizable) obj, className);
+            return true;
+        }
+
+        // ── TypeHandler (for non-Externalizable custom types) ──
         for (TypeHandler handler : typeHandlers) {
             if (handler.canWrite(obj)) {
                 writeByte(handler.typeCode());
+                // Assign a wire handle (the reader registers one for every type handler result)
+                assignObjectHandle(obj);
                 handler.write(obj, this);
                 return true;
             }
         }
-
-        Class<?> clazz = obj.getClass();
-        String className = clazz.getName();
 
         // Diagnostic
         diagWriteCount++;
@@ -379,12 +420,6 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
         if (obj instanceof EnumMap)      { writeEnumMapStd((EnumMap<?, ?>) obj); return true; }
         if (obj instanceof BitSet)       { writeBitSetStd((BitSet) obj); return true; }
 
-        // ── Externalizable (Trove, ChunkSet, etc.) ──
-        if (obj instanceof java.io.Externalizable) {
-            writeExternalizable((java.io.Externalizable) obj, className);
-            return true;
-        }
-
         // ── Object array (push frame for elements) ──
         if (obj instanceof Object[]) {
             Object[] arr = (Object[]) obj;
@@ -403,9 +438,8 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
 
         // ── List (non-ArrayList): snapshot as ArrayList and re-enter ──
         if (obj instanceof List) {
-            // Snapshot into ArrayList, remove the current handle, re-enter
+            // Remove sentinel pre-registration; snapshot gets its own handle via re-entry
             objectRefs.remove(obj);
-            nextHandle--;
             ArrayList<?> snapshot = (obj instanceof ArrayList)
                 ? (ArrayList<?>) obj
                 : new ArrayList<>((java.util.Collection<?>) obj);
@@ -415,7 +449,6 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
         // ── Set: snapshot as ArrayList and re-enter ──
         if (obj instanceof java.util.Set) {
             objectRefs.remove(obj);
-            nextHandle--;
             ArrayList<Object> snapshot = new ArrayList<>((java.util.Collection<?>) obj);
             return writeOneObject(snapshot);
         }
@@ -423,7 +456,6 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
         // ── Map (non-HashMap/EnumMap): snapshot as HashMap and re-enter ──
         if (obj instanceof Map) {
             objectRefs.remove(obj);
-            nextHandle--;
             HashMap<Object, Object> snapshot = new HashMap<>((Map<?, ?>) obj);
             return writeOneObject(snapshot);
         }
@@ -531,10 +563,32 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
         return val != null ? val : NULL_CHILD;
     }
 
+    /** Assign a classDesc handle. */
+    private int assignClassDescHandle(String className) {
+        int handle = nextHandle++;
+        Integer prev = classDescHandles.get(className);
+        classDescHandles.put(className, handle);
+        traceHandle("CD:" + className);
+        // Trace: warn when a classDesc handle is overwritten
+        if (traceEnabled && prev != null && className.contains("CompassDirection")) {
+            System.out.println("[TOS-WARN] classDescHandle OVERWRITE for " + className
+                + " old=" + prev + " new=" + handle + " idx=" + (handle - 0x7e0000));
+        }
+        return handle;
+    }
+
     /** Assign the actual wire handle to an object (after classDesc has been written). */
     private void assignObjectHandle(Object obj) {
         int handle = nextHandle++;
         objectRefs.put(obj, handle);
+        if (traceEnabled) {
+            String tag = obj == null ? "null" : obj.getClass().getName();
+            // Shorten common types
+            if (tag.startsWith("java.util.")) tag = "ju:" + tag.substring(11);
+            else if (tag.startsWith("java.lang.")) tag = "jl:" + tag.substring(10);
+            else if (tag.startsWith("[")) tag = "arr:" + tag;
+            traceHandle("OBJ:" + tag);
+        }
     }
     private void writeBlockDataEnds(ClassFieldInfo[] hierarchy) throws IOException {
         for (ClassFieldInfo cfi : hierarchy) {
@@ -577,16 +631,24 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
      * references the next element, and the chain ends with TC_NULL.
      */
     private void writeClassDescChain(ClassFieldInfo[] hierarchy) throws IOException {
-        // Write from most-derived to most-super, then TC_NULL
-        // hierarchy[0] is most-super, hierarchy[length-1] is most-derived
-        // Standard format: most-derived TC_CLASSDESC first, its superClassDesc points to parent
+        // Write from most-derived to most-super, then TC_NULL.
+        // hierarchy[0] is most-super, hierarchy[length-1] is most-derived.
+        // Standard format: most-derived TC_CLASSDESC first, its superClassDesc points to parent.
+        // If a classDesc was already written (exists in classDescHandles), emit TC_REFERENCE
+        // instead of re-writing it. This prevents handle overwrites that corrupt back-references.
         for (int i = hierarchy.length - 1; i >= 0; i--) {
             ClassFieldInfo cfi = hierarchy[i];
+            Integer existingHandle = classDescHandles.get(cfi.className);
+            if (existingHandle != null) {
+                // Already written — TC_REFERENCE replaces the entire remaining chain
+                writeByte(TC_REFERENCE);
+                writeInt(existingHandle);
+                return;
+            }
             writeByte(TC_CLASSDESC);
             writeDescString(cfi.className);
             writeLong(cfi.suid);
-            int descHandle = nextHandle++;
-            classDescHandles.put(cfi.className, descHandle);
+            int descHandle = assignClassDescHandle(cfi.className);
             writeByte(cfi.flags);
 
             // Field count
@@ -622,14 +684,19 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
         if (existing != null) {
             writeByte(TC_REFERENCE);
             writeInt(existing);
+            // Trace: log when a classDesc TC_REFERENCE is written and what handle it points to
+            if (traceEnabled && className.contains("CompassDirection")) {
+                int idx = existing - 0x7e0000;
+                String traceType = idx >= 0 && idx < handleTrace.size() ? handleTrace.get(idx) : "?";
+                System.out.println("[TOS-REF] writeClassDesc TC_REF for " + className + " handle=" + existing + " idx=" + idx + " traceType=" + traceType);
+            }
             return;
         }
         writeByte(TC_CLASSDESC);
         writeDescString(className);
         long suid = isEnum ? lookupEnumSUID(className) : lookupSUID(className);
         writeLong(suid);
-        int descHandle = nextHandle++;
-        classDescHandles.put(className, descHandle);
+        int descHandle = assignClassDescHandle(className);
         int flags = SC_SERIALIZABLE | extraFlags;
         writeByte(flags);
         // No fields for enums, simple types
@@ -671,6 +738,7 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
         }
         int handle = nextHandle++;
         stringHandles.put(s, handle);
+        traceHandle("S:" + s.substring(0, Math.min(20, s.length())));
         writeByte(TC_STRING);
         byte[] bytes = s.getBytes(java.nio.charset.StandardCharsets.UTF_8);
         writeShort(bytes.length);
@@ -708,6 +776,7 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
         }
         int handle = nextHandle++;
         stringHandles.put(typeName, handle);
+        traceHandle("FTN:" + typeName);
         writeByte(TC_STRING);
         byte[] bytes = typeName.getBytes(java.nio.charset.StandardCharsets.UTF_8);
         writeShort(bytes.length);
@@ -727,8 +796,7 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
             writeByte(TC_CLASSDESC);
             writeDescString("java.lang.Integer");
             writeLong(1360826667806852920L);
-            int descHandle = nextHandle++;
-            classDescHandles.put("java.lang.Integer", descHandle);
+            int descHandle = assignClassDescHandle("java.lang.Integer");
             writeByte(SC_SERIALIZABLE);
             writeShort(1);
             writeByte(INT_TYPE);
@@ -750,8 +818,7 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
             writeByte(TC_CLASSDESC);
             writeDescString("java.lang.Long");
             writeLong(4290774380558885855L);
-            int descHandle = nextHandle++;
-            classDescHandles.put("java.lang.Long", descHandle);
+            int descHandle = assignClassDescHandle("java.lang.Long");
             writeByte(SC_SERIALIZABLE);
             writeShort(1);
             writeByte(LONG_TYPE);
@@ -773,8 +840,7 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
             writeByte(TC_CLASSDESC);
             writeDescString("java.lang.Double");
             writeLong(-9172774392245257468L);
-            int descHandle = nextHandle++;
-            classDescHandles.put("java.lang.Double", descHandle);
+            int descHandle = assignClassDescHandle("java.lang.Double");
             writeByte(SC_SERIALIZABLE);
             writeShort(1);
             writeByte(DOUBLE_TYPE);
@@ -796,8 +862,7 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
             writeByte(TC_CLASSDESC);
             writeDescString("java.lang.Float");
             writeLong(-2671254064391917916L);
-            int descHandle = nextHandle++;
-            classDescHandles.put("java.lang.Float", descHandle);
+            int descHandle = assignClassDescHandle("java.lang.Float");
             writeByte(SC_SERIALIZABLE);
             writeShort(1);
             writeByte(FLOAT_TYPE);
@@ -819,8 +884,7 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
             writeByte(TC_CLASSDESC);
             writeDescString("java.lang.Boolean");
             writeLong(-3665804199070385834L);
-            int descHandle = nextHandle++;
-            classDescHandles.put("java.lang.Boolean", descHandle);
+            int descHandle = assignClassDescHandle("java.lang.Boolean");
             writeByte(SC_SERIALIZABLE);
             writeShort(1);
             writeByte(BOOLEAN_TYPE);
@@ -842,8 +906,7 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
             writeByte(TC_CLASSDESC);
             writeDescString("java.lang.Short");
             writeLong(7515723878860438694L);
-            int descHandle = nextHandle++;
-            classDescHandles.put("java.lang.Short", descHandle);
+            int descHandle = assignClassDescHandle("java.lang.Short");
             writeByte(SC_SERIALIZABLE);
             writeShort(1);
             writeByte(SHORT_TYPE);
@@ -865,8 +928,7 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
             writeByte(TC_CLASSDESC);
             writeDescString("java.lang.Character");
             writeLong(3786198719317633806L);
-            int descHandle = nextHandle++;
-            classDescHandles.put("java.lang.Character", descHandle);
+            int descHandle = assignClassDescHandle("java.lang.Character");
             writeByte(SC_SERIALIZABLE);
             writeShort(1);
             writeByte(CHAR_TYPE);
@@ -888,8 +950,7 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
             writeByte(TC_CLASSDESC);
             writeDescString("java.lang.Byte");
             writeLong(-7183690577395765713L);
-            int descHandle = nextHandle++;
-            classDescHandles.put("java.lang.Byte", descHandle);
+            int descHandle = assignClassDescHandle("java.lang.Byte");
             writeByte(SC_SERIALIZABLE);
             writeShort(1);
             writeByte(BYTE_TYPE);
@@ -959,8 +1020,7 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
             writeByte(TC_CLASSDESC);
             writeDescString("java.util.ArrayList");
             writeLong(8683452581122892189L);
-            int descHandle = nextHandle++;
-            classDescHandles.put("java.util.ArrayList", descHandle);
+            int descHandle = assignClassDescHandle("java.util.ArrayList");
             writeByte(SC_SERIALIZABLE | SC_WRITE_METHOD);
             writeShort(1);
             writeByte(INT_TYPE);
@@ -997,8 +1057,7 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
             writeByte(TC_CLASSDESC);
             writeDescString("java.util.HashMap");
             writeLong(362498820763181265L);
-            int descHandle = nextHandle++;
-            classDescHandles.put("java.util.HashMap", descHandle);
+            int descHandle = assignClassDescHandle("java.util.HashMap");
             writeByte(SC_SERIALIZABLE | SC_WRITE_METHOD);
             writeShort(2);
             writeByte(FLOAT_TYPE);
@@ -1037,8 +1096,7 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
             writeByte(TC_CLASSDESC);
             writeDescString("java.util.EnumMap");
             writeLong(458661240069192865L);
-            int descHandle = nextHandle++;
-            classDescHandles.put("java.util.EnumMap", descHandle);
+            int descHandle = assignClassDescHandle("java.util.EnumMap");
             writeByte(SC_SERIALIZABLE | SC_WRITE_METHOD);
             writeShort(1);
             writeByte(OBJECT_TYPE);
@@ -1065,15 +1123,25 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
         writeByte(TC_ENDBLOCKDATA);
     }
 
-    /** Extract the key type from an EnumMap via reflection. */
+    /** Extract the key type from an EnumMap via reflection or entry-set fallback. */
     private static Class<?> getEnumMapKeyType(EnumMap<?, ?> map) {
         try {
             Field f = EnumMap.class.getDeclaredField("keyType");
             f.setAccessible(true);
-            return (Class<?>) f.get(map);
-        } catch (Throwable t) {
-            return null;
-        }
+            Class<?> kt = (Class<?>) f.get(map);
+            if (kt != null) return kt;
+        } catch (Throwable t) {}
+        // Fallback: derive keyType from first entry
+        try {
+            for (Object e : map.entrySet()) {
+                Map.Entry<?, ?> entry = (Map.Entry<?, ?>) e;
+                Object key = entry.getKey();
+                if (key instanceof Enum) {
+                    return ((Enum<?>) key).getDeclaringClass();
+                }
+            }
+        } catch (Throwable t) {}
+        return null;
     }
 
     /**
@@ -1090,8 +1158,7 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
             writeByte(TC_CLASSDESC);
             writeDescString("java.util.BitSet");
             writeLong(7997698588986878753L);
-            int descHandle = nextHandle++;
-            classDescHandles.put("java.util.BitSet", descHandle);
+            int descHandle = assignClassDescHandle("java.util.BitSet");
             writeByte(SC_SERIALIZABLE | SC_WRITE_METHOD);
             writeShort(1);
             writeByte(ARRAY_TYPE);
@@ -1142,24 +1209,23 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
             chain.add(c);
             c = c.getSuperclass();
         }
-        // Write from most-derived to most-super
+        // Write from most-derived to most-super.
+        // Each TC_CLASSDESC implicitly contains its superClassDesc (the next entry).
+        // TC_REFERENCE replaces the ENTIRE remaining chain (the referenced classDesc
+        // already has the full super chain built in), so we stop immediately.
         for (int i = 0; i < chain.size(); i++) {
             String name = chain.get(i).getName();
             Integer existing = classDescHandles.get(name);
             if (existing != null) {
                 writeByte(TC_REFERENCE);
                 writeInt(existing);
-                // Skip remaining chain since the superclass desc is embedded
-                // Actually, if the desc was already written, its super was already included
-                // so we just need the reference
-                continue;
+                return; // TC_REFERENCE includes the full super chain — nothing more to write
             }
             writeByte(TC_CLASSDESC);
             writeDescString(name);
             long suid = lookupSUID(name);
             writeLong(suid);
-            int descHandle = nextHandle++;
-            classDescHandles.put(name, descHandle);
+            int descHandle = assignClassDescHandle(name);
             writeByte(SC_EXTERNALIZABLE | SC_BLOCK_DATA); // 0x0C
             writeShort(0); // no fields
             writeByte(TC_ENDBLOCKDATA);
@@ -1207,55 +1273,21 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
         bytePos += 10;
     }
 
-    /** Write a long inside block data context. */
-    private void writeBlockDataLong(long val) throws IOException {
-        writeByte(TC_BLOCKDATA);
-        writeByte(8);
-        out.write((int) (val >> 56) & 0xFF);
-        out.write((int) (val >> 48) & 0xFF);
-        out.write((int) (val >> 40) & 0xFF);
-        out.write((int) (val >> 32) & 0xFF);
-        out.write((int) (val >> 24) & 0xFF);
-        out.write((int) (val >> 16) & 0xFF);
-        out.write((int) (val >> 8) & 0xFF);
-        out.write((int) val & 0xFF);
-        bytePos += 10;
-    }
-
-    /** Write a UTF string inside block data context. */
-    private void writeBlockDataUTF(String s) throws IOException {
-        byte[] bytes = s.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        int len = bytes.length;
-        if (len <= 255) {
-            writeByte(TC_BLOCKDATA);
-            writeByte(len);
-            out.write(bytes);
-            bytePos += 2 + len;
-        } else {
-            writeByte(TC_BLOCKDATALONG);
-            writeInt(len);
-            out.write(bytes);
-            bytePos += 5 + len;
-        }
-    }
-
     // ── Class info caching and field collection ────────────────────────────────
 
     private CachedClassInfo getClassInfo(Class<?> clazz, String className) {
         CachedClassInfo cached = classInfoCache.get(className);
         if (cached != null) return cached;
 
-        // Collect Serializable class hierarchy (most-super first)
-        // Stop at the first non-Serializable ancestor (standard Java serialization)
+        // Collect full class hierarchy (most-super first), including non-Serializable
+        // ancestors. Standard Java serialization stops at non-Serializable boundaries,
+        // but Ludii's class hierarchy has Serializable classes extending non-Serializable
+        // parents (e.g., Vertex extends TopologyElement) whose fields must be preserved.
         ArrayList<Class<?>> hierarchy = new ArrayList<>();
         Class<?> c = clazz;
         while (c != null && c != Object.class) {
             hierarchy.add(c);
             c = c.getSuperclass();
-            // Stop when we hit a non-Serializable class
-            if (c != null && c != Object.class && !java.io.Serializable.class.isAssignableFrom(c)) {
-                break;
-            }
         }
         // Reverse to get most-super first
         ArrayList<Class<?>> sorted = new ArrayList<>(hierarchy);
@@ -1415,24 +1447,6 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
             || className.startsWith("grammar.");
     }
 
-    // ── Legacy constants (kept temporarily for TObjectInputStream compatibility) ──
-    // These will be removed when TObjectInputStream is rewritten for standard format.
-    @Deprecated static final byte TC_INTEGER   = 0x4C;
-    @Deprecated static final byte TC_LONG      = 0x4D;
-    @Deprecated static final byte TC_DOUBLE    = 0x4E;
-    @Deprecated static final byte TC_FLOAT     = 0x4F;
-    @Deprecated static final byte TC_BOOLEAN   = 0x5A;
-    @Deprecated static final byte TC_LIST      = 0x5B;
-    @Deprecated static final byte TC_MAP       = 0x5C;
-    @Deprecated static final byte TC_SHORT     = 0x5D;
-    @Deprecated static final byte TC_CHAR      = 0x5E;
-    @Deprecated static final byte TC_BYTE      = 0x5F;
-    @Deprecated static final byte TC_SET       = 0x60;
-    @Deprecated static final byte TC_BITSET    = 0x61;
-    @Deprecated static final byte TC_SCHEMA    = 0x67;
-    @Deprecated static final byte TC_ENUM_OLD  = 0x7E;
-    @Deprecated static final byte TC_LONGSTRING = 0x62;
-
     /**
      * Minimal ObjectOutput that writes raw bytes to a ByteArrayOutputStream.
      * Used to capture writeExternal output without ObjectOutputStream overhead.
@@ -1532,6 +1546,7 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
     @Override
     public void close() throws IOException {
         lastTotalObjectCount = objectRefs.size();
+        lastHandleCount = nextHandle;
         out.close();
     }
 
