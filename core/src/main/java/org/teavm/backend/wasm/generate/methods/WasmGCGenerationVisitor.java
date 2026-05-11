@@ -63,6 +63,8 @@ import org.teavm.backend.wasm.model.expression.WasmCastBranch;
 import org.teavm.backend.wasm.model.expression.WasmCastCondition;
 import org.teavm.backend.wasm.model.expression.WasmDrop;
 import org.teavm.backend.wasm.model.expression.WasmExpression;
+import org.teavm.backend.wasm.model.expression.WasmExternConversion;
+import org.teavm.backend.wasm.model.expression.WasmExternConversionType;
 import org.teavm.backend.wasm.model.expression.WasmGetGlobal;
 import org.teavm.backend.wasm.model.expression.WasmGetLocal;
 import org.teavm.backend.wasm.model.expression.WasmInt32Constant;
@@ -917,6 +919,31 @@ public class WasmGCGenerationVisitor extends BaseWasmGenerationVisitor {
     private WasmExpression forceType(WasmExpression expression, WasmType expectedType) {
         expression.acceptVisitor(typeInference);
         var actualType = typeInference.getSingleResult();
+
+        // CompositeReference (struct ref) → externref
+        if (expectedType == WasmType.EXTERN
+                && actualType instanceof WasmType.CompositeReference) {
+            return new WasmExternConversion(WasmExternConversionType.ANY_TO_EXTERN, expression);
+        }
+
+        // externref → CompositeReference (struct ref)
+        if (actualType == WasmType.EXTERN
+                && expectedType instanceof WasmType.CompositeReference) {
+            var expectedComposite = ((WasmType.CompositeReference) expectedType).composite;
+            if (expectedComposite instanceof WasmStructure) {
+                var targetType = expectedComposite.getReference();
+                var anyConversion = new WasmExternConversion(
+                        WasmExternConversionType.EXTERN_TO_ANY, expression);
+                var check = new WasmBlock(false);
+                check.setType(targetType.asBlock());
+                check.setLocation(expression.getLocation());
+                check.getBody().add(new WasmCastBranch(WasmCastCondition.SUCCESS,
+                        anyConversion, WasmType.ANY, targetType, check));
+                check.getBody().add(new WasmDrop(new WasmPop(WasmType.ANY)));
+                check.getBody().add(new WasmNullConstant(targetType));
+                return check;
+            }
+        }
 
         // Handle compact mode: actual type is anyref/structref (SpecialReference)
         // but expected type is a specific struct (CompositeReference).

@@ -1,11 +1,12 @@
 /*
  *  TeaVM classlib shim for java.net.http.HttpClient.
- *  Uses XHR (XMLHttpRequest) via TeaVM's JSO wrapper for HTTP requests,
- *  and returns a TWebSocket.Builder for WebSocket connections.
  *
- *  The send() method uses @Async/AsyncCallback to yield to the browser
- *  event loop while the XHR request is in-flight — same pattern as
- *  TXHRURLConnection.performRequest().
+ *  Uses fetch() for HTTP — native in browsers and Node.js 18+.
+ *  Falls back to XMLHttpRequest in older environments.
+ *  No external npm polyfills needed.
+ *
+ *  The send() method uses @Async/AsyncCallback to yield to the
+ *  event loop while the request is in-flight.
  */
 
 package org.teavm.classlib.java.net.http;
@@ -17,7 +18,9 @@ import java.util.Map;
 
 import org.teavm.interop.Async;
 import org.teavm.interop.AsyncCallback;
-import org.teavm.jso.ajax.XMLHttpRequest;
+import org.teavm.jso.JSBody;
+import org.teavm.jso.JSFunctor;
+import org.teavm.jso.JSObject;
 
 public class THttpClient {
     private Duration connectTimeout;
@@ -41,32 +44,101 @@ public class THttpClient {
 
     private void doSend(THttpRequest request, THttpResponse.BodyHandler<String> handler,
                         AsyncCallback<THttpResponse<String>> callback) {
-        final XMLHttpRequest xhr = new XMLHttpRequest();
+        final String method = request.method();
+        final String url = request.uri().toString();
+        final String body = request.bodyContent();
 
-        xhr.open(request.method(), request.uri().toString());
-
-        // Set headers
-        if (request.headers() != null) {
+        String headerJson = null;
+        if (request.headers() != null && !request.headers().isEmpty()) {
+            final StringBuilder sb = new StringBuilder("{");
+            boolean first = true;
             for (final Map.Entry<String, String> entry : request.headers().entrySet()) {
-                xhr.setRequestHeader(entry.getKey(), entry.getValue());
+                if (!first) sb.append(',');
+                sb.append('"').append(escapeJson(entry.getKey())).append("\":\"")
+                  .append(escapeJson(entry.getValue())).append('"');
+                first = false;
+            }
+            sb.append('}');
+            headerJson = sb.toString();
+        }
+
+        // Compute timeout in milliseconds: use the shorter of connectTimeout / requestTimeout
+        int timeoutMs = 0;
+        if (connectTimeout != null) {
+            timeoutMs = (int) Math.min(connectTimeout.toMillis(), Integer.MAX_VALUE);
+        }
+        if (requestTimeout != null) {
+            final int reqMs = (int) Math.min(requestTimeout.toMillis(), Integer.MAX_VALUE);
+            if (timeoutMs == 0 || reqMs < timeoutMs) {
+                timeoutMs = reqMs;
             }
         }
 
-        xhr.setOnReadyStateChange(() -> {
-            if (xhr.getReadyState() != XMLHttpRequest.DONE) return;
-
-            final int status = xhr.getStatus();
-            final String body = xhr.getResponseText();
-            callback.complete(new THttpResponse<>(status, handler.handle(status, body)));
+        fetchRequest(method, url, body, headerJson, timeoutMs, (status, responseText) -> {
+            callback.complete(new THttpResponse<>(status, handler.handle(status, responseText)));
         });
+    }
 
-        // Send with body (POST) or without (GET)
-        final String body = request.bodyContent();
-        if (body != null) {
-            xhr.send(body);
-        } else {
-            xhr.send();
+    @JSFunctor
+    private interface FetchCallback extends JSObject {
+        void onComplete(int status, String responseText);
+    }
+
+    /**
+     * Uses fetch() — available in all modern browsers and Node.js 18+.
+     * Falls back to XMLHttpRequest if fetch() is not available.
+     * Supports optional timeout via AbortController (fetch) or setTimeout (XHR).
+     */
+    @JSBody(params = {"method", "url", "body", "headersJson", "timeoutMs", "callback"}, script = ""
+        + "var opts = {method: method};"
+        + "if (body) opts.body = body;"
+        + "if (headersJson) {"
+        + "  try { opts.headers = JSON.parse(headersJson); } catch(e) {}"
+        + "}"
+        + "if (typeof fetch === 'function') {"
+        + "  var controller = typeof AbortController === 'function' ? new AbortController() : null;"
+        + "  if (controller) opts.signal = controller.signal;"
+        + "  if (timeoutMs > 0 && controller) {"
+        + "    setTimeout(function() { if (controller) controller.abort(); }, timeoutMs);"
+        + "  }"
+        + "  fetch(url, opts)"
+        + "    .then(function(r) {"
+        + "      return r.text().then(function(t) { return {s: r.status, b: t}; });"
+        + "    })"
+        + "    .then(function(result) { callback(result.s, result.b); })"
+        + "    .catch(function(e) { callback(0, ''); });"
+        + "} else if (typeof XMLHttpRequest === 'function' || typeof XMLHttpRequest === 'object') {"
+        + "  var xhr = new XMLHttpRequest();"
+        + "  xhr.open(method, url);"
+        + "  if (timeoutMs > 0) xhr.timeout = timeoutMs;"
+        + "  if (headersJson) {"
+        + "    try {"
+        + "      var h = JSON.parse(headersJson);"
+        + "      for (var k in h) xhr.setRequestHeader(k, h[k]);"
+        + "    } catch(e) {}"
+        + "  }"
+        + "  xhr.onreadystatechange = function() {"
+        + "    if (xhr.readyState !== 4) return;"
+        + "    callback(xhr.status, xhr.responseText || '');"
+        + "  };"
+        + "  xhr.ontimeout = function() { callback(0, ''); };"
+        + "  xhr.send(body || null);"
+        + "} else {"
+        + "  callback(0, '');"
+        + "}")
+    private static native void fetchRequest(String method, String url, String body,
+                                            String headersJson, int timeoutMs, FetchCallback callback);
+
+    private static String escapeJson(final String s) {
+        if (s == null) return "";
+        final StringBuilder sb = new StringBuilder(s.length());
+        for (int i = 0; i < s.length(); i++) {
+            final char c = s.charAt(i);
+            if (c == '"') sb.append("\\\"");
+            else if (c == '\\') sb.append("\\\\");
+            else sb.append(c);
         }
+        return sb.toString();
     }
 
     // ── WebSocket builder ─────────────────────────────────────────────────

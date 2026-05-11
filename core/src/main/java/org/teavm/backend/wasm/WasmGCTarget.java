@@ -61,6 +61,8 @@ import org.teavm.backend.wasm.model.WasmType;
 import org.teavm.backend.wasm.model.expression.WasmGetLocal;
 import org.teavm.backend.wasm.model.expression.WasmStructGet;
 import org.teavm.backend.wasm.model.expression.WasmStructSet;
+import org.teavm.backend.wasm.optimization.WasmGCExternRefFixup;
+import org.teavm.backend.wasm.optimization.WasmGCEmptyBodyFixup;
 import org.teavm.backend.wasm.optimization.WasmUsageCounter;
 import org.teavm.backend.wasm.render.WasmBinaryRenderer;
 import org.teavm.backend.wasm.render.WasmBinaryStatsCollector;
@@ -548,6 +550,8 @@ public class WasmGCTarget implements TeaVMTarget, TeaVMWasmGCHost {
         var binaryRenderer = new WasmBinaryRenderer(binaryWriter, WasmBinaryVersion.V_0x1, obfuscated,
                 null, null, debugLines, null, WasmBinaryStatsCollector.EMPTY);
         optimizeIndexes(module);
+        WasmGCExternRefFixup.apply(module);
+        WasmGCEmptyBodyFixup.apply(module);
         module.prepareForRendering();
         binaryRenderer.render(module, customSections(debugInfoBuilder, module));
         var data = binaryWriter.getData();

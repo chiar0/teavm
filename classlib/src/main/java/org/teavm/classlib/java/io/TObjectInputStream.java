@@ -444,10 +444,12 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
                     throw new IOException(formatException(e), e);
                 } catch (Throwable t) {
                     // Catch JS runtime errors (TypeError, etc.) that TeaVM wraps
-                    System.out.println("[TIS-DELIVER] CRASH in deliverToFrame frameTop=" + frameTop
-                        + " frameType=" + frameStack[Math.max(0, frameTop - 1)].type
-                        + " className=" + frameStack[Math.max(0, frameTop - 1)].className
-                        + " err=" + t.getClass().getName() + ": " + t.getMessage());
+                    if (SerializationDiagnostics.isDebug()) {
+                        System.out.println("[TIS-DELIVER] CRASH in deliverToFrame frameTop=" + frameTop
+                            + " frameType=" + frameStack[Math.max(0, frameTop - 1)].type
+                            + " className=" + frameStack[Math.max(0, frameTop - 1)].className
+                            + " err=" + t.getClass().getName() + ": " + t.getMessage());
+                    }
                     if (frameTop > 0) {
                         frameTop--;
                     }
@@ -522,10 +524,16 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
                 return readStdObject();
             case TC_CLASS: {
                 // TC_CLASS: classDesc + assign handle
-                readClassDesc();
+                ClassDescInfo desc = readClassDesc();
                 totalObjects++;
-                register(null); // Register handle to match writer's assignObjectHandle
-                return null; // Class objects not fully supported
+                Object classObj = null;
+                if (desc != null && desc.className != null) {
+                    try {
+                        classObj = Class.forName(desc.className);
+                    } catch (ClassNotFoundException ignored) {}
+                }
+                register(classObj);
+                return classObj;
             }
             case TC_BLOCKDATA:
             case TC_BLOCKDATALONG: {
@@ -712,7 +720,6 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
     }
 
     // ── Container starters ───────────────────────────────────────────────────
-    // (Legacy format methods removed — only standard format is now supported)
 
     // ═════════════════════════════════════════════════════════════════════════
     //  Reflection helpers (standard java.lang.reflect)
@@ -769,7 +776,7 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
                 fieldWriter.setField(obj, fieldName, value, schemaTypeDescriptor);
                 return;
             } catch (Exception e) {
-                if (totalObjects < 10) {
+                if (SerializationDiagnostics.isDebug()) {
                     System.out.println("[TIS-SETFIELD] fieldWriter FAILED: " + obj.getClass().getName()
                         + "." + fieldName + " = " + (value != null ? value.getClass().getName() : "null")
                         + " err=" + e.getMessage());
@@ -777,7 +784,7 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
                 if (listener != null) {
                     listener.onError("setField", obj.getClass().getName(), e);
                 }
-                return;
+                // Fall through to default reflection path
             }
         }
         Field f = findField(obj.getClass(), fieldName);
@@ -1480,9 +1487,11 @@ public class TObjectInputStream extends InputStream implements TObjectInput {
         try {
             return processStdFieldsFrame();
         } catch (Throwable t) {
-            System.out.println("[TIS-STD] CRASH in readStdObject class=" + pendingClassName
-                + " totalObjects=" + totalObjects + " pos=" + position
-                + " err=" + t.getClass().getName() + ": " + t.getMessage());
+            if (SerializationDiagnostics.isDebug()) {
+                System.out.println("[TIS-STD] CRASH in readStdObject class=" + pendingClassName
+                    + " totalObjects=" + totalObjects + " pos=" + position
+                    + " err=" + t.getClass().getName() + ": " + t.getMessage());
+            }
             throw t;
         }
     }

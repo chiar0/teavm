@@ -1,13 +1,11 @@
 /*
  *  TeaVM classlib shim for java.net.http.WebSocket.
- *  Wraps org.teavm.jso.websocket.WebSocket (existing JSO browser wrapper).
  *
- *  Adapts the JSO WebSocket's event-driven API (onOpen/onMessage/onClose/onError)
- *  to java.net.http.WebSocket's Listener interface.
+ *  Uses @JSBody for native WebSocket access — works in both
+ *  browsers (native WebSocket) and Node.js (ws package fallback).
  *
- *  buildAsync() creates the JSO WebSocket and bridges events immediately.
- *  Since TeaVM is single-threaded, the returned CompletableFuture is already
- *  completed — events fire from the browser event loop later.
+ *  The host application does NOT need to inject globalThis.WebSocket;
+ *  this shim detects the environment and falls back to require('ws').
  */
 
 package org.teavm.classlib.java.net.http;
@@ -15,95 +13,143 @@ package org.teavm.classlib.java.net.http;
 import java.net.URI;
 
 import org.teavm.classlib.java.util.concurrent.TCompletableFuture;
-import org.teavm.jso.dom.events.Event;
-import org.teavm.jso.dom.events.EventListener;
-import org.teavm.jso.dom.events.MessageEvent;
-import org.teavm.jso.websocket.CloseEvent;
+import org.teavm.classlib.java.util.concurrent.TCompletionStage;
+import org.teavm.jso.JSBody;
+import org.teavm.jso.JSFunctor;
+import org.teavm.jso.JSObject;
 
 public class TWebSocket {
     public static final int NORMAL_CLOSURE = 1000;
 
-    private final org.teavm.jso.websocket.WebSocket jsoWs;
+    private final JSObject nativeWs;
     private final Listener listener;
 
-    private TWebSocket(org.teavm.jso.websocket.WebSocket jsoWs, Listener listener) {
-        this.jsoWs = jsoWs;
+    private TWebSocket(JSObject nativeWs, Listener listener) {
+        this.nativeWs = nativeWs;
         this.listener = listener;
     }
 
-    // ── Factory (called from Builder.buildAsync) ──────────────────────────
+    // ── Event callback (@JSFunctor — single method) ──────────────────────
+
+    @JSFunctor
+    private interface WsCallback extends JSObject {
+        void event(String type, String data, int code, String reason);
+    }
+
+    // ── Factory ──────────────────────────────────────────────────────────
 
     private static TCompletableFuture<TWebSocket> createAndConnect(URI uri, Listener listener) {
-        final org.teavm.jso.websocket.WebSocket jsoWs =
-                new org.teavm.jso.websocket.WebSocket(uri.toString());
-
+        final TCompletableFuture<TWebSocket> future = new TCompletableFuture<>();
         final TWebSocket[] ref = new TWebSocket[1];
 
-        jsoWs.onOpen((EventListener<Event>) evt -> {
-            if (ref[0] != null) {
-                listener.onOpen(ref[0]);
+        final WsCallback cb = (type, data, code, reason) -> {
+            final TWebSocket ws = ref[0];
+            if (ws == null) return;
+            switch (type) {
+                case "open":
+                    listener.onOpen(ws);
+                    future.complete(ws);
+                    break;
+                case "message":
+                    listener.onText(ws, data, true);
+                    break;
+                case "close":
+                    listener.onClose(ws, code, reason);
+                    break;
+                case "error":
+                    listener.onError(ws, new RuntimeException("WebSocket error"));
+                    future.completeExceptionally(new RuntimeException("WebSocket connection failed"));
+                    break;
+                default:
+                    break;
             }
-        });
+        };
 
-        jsoWs.onMessage((EventListener<MessageEvent>) evt -> {
-            if (ref[0] != null) {
-                final String data = evt.getDataAsString();
-                listener.onText(ref[0], data, true);
-            }
-        });
+        final JSObject nws = createNative(uri.toString(), cb);
+        if (nws == null) {
+            future.completeExceptionally(new RuntimeException("No WebSocket implementation available"));
+            return future;
+        }
+        final TWebSocket tws = new TWebSocket(nws, listener);
+        ref[0] = tws;
 
-        jsoWs.onClose((EventListener<CloseEvent>) evt -> {
-            if (ref[0] != null) {
-                listener.onClose(ref[0], evt.getCode(), evt.getReason());
-            }
-        });
-
-        jsoWs.onError((EventListener<Event>) evt -> {
-            if (ref[0] != null) {
-                listener.onError(ref[0], new RuntimeException("WebSocket error"));
-            }
-        });
-
-        final TWebSocket ws = new TWebSocket(jsoWs, listener);
-        ref[0] = ws;
-
-        return TCompletableFuture.completedFuture(ws);
+        return future;
     }
+
+    /**
+     * Creates a native WebSocket.
+     * Browser: uses global WebSocket constructor.
+     * Node.js 22+: uses built-in globalThis.WebSocket.
+     * Node.js <22: falls back to require('ws').
+     */
+    @JSBody(params = {"url", "cb"}, script = ""
+        + "var WS = null;"
+        + "if (typeof WebSocket === 'function') {"
+        + "  WS = WebSocket;"
+        + "} else if (typeof globalThis !== 'undefined' && typeof globalThis.WebSocket === 'function') {"
+        + "  WS = globalThis.WebSocket;"
+        + "} else if (typeof require === 'function') {"
+        + "  try { WS = require('ws'); } catch(e) {}"
+        + "}"
+        + "if (!WS) return null;"
+        + "var ws = new WS(url);"
+        + "ws.onopen = function() { cb('open', '', 0, ''); };"
+        + "ws.onmessage = function(evt) {"
+        + "  var d = (evt && evt.data != null) ? String(evt.data) : '';"
+        + "  cb('message', d, 0, '');"
+        + "};"
+        + "ws.onclose = function(evt) {"
+        + "  var c, r;"
+        + "  if (evt && typeof evt === 'object' && 'code' in evt) {"
+        + "    c = evt.code || 1000; r = evt.reason || '';"
+        + "  } else {"
+        + "    c = arguments.length > 0 ? arguments[0] : 1000;"
+        + "    r = arguments.length > 1 ? arguments[1] : '';"
+        + "  }"
+        + "  cb('close', '', c, r);"
+        + "};"
+        + "ws.onerror = function() { cb('error', '', 0, ''); };"
+        + "return ws;")
+    private static native JSObject createNative(String url, WsCallback cb);
 
     // ── Instance methods ──────────────────────────────────────────────────
 
     public TCompletableFuture<TWebSocket> sendText(CharSequence data, boolean last) {
-        jsoWs.send(data.toString());
+        nativeSend(nativeWs, data.toString());
         return TCompletableFuture.completedFuture(this);
     }
 
     public TCompletableFuture<TWebSocket> sendClose(int code, String reason) {
-        jsoWs.close(code, reason);
+        nativeClose(nativeWs, code, reason);
         return TCompletableFuture.completedFuture(this);
     }
 
     public void request(long n) {
-        // No-op — browser WebSocket handles backpressure automatically
+        // No-op — backpressure handled by the native WebSocket
     }
 
-    // ── Builder (nested in WebSocket, matching JDK structure) ─────────────
+    @JSBody(params = {"ws", "data"}, script = "if (ws && typeof ws.send === 'function') { try { ws.send(data); } catch(e) {} }")
+    private static native void nativeSend(JSObject ws, String data);
+
+    @JSBody(params = {"ws", "code", "reason"}, script = "if (ws && typeof ws.close === 'function') ws.close(code, reason);")
+    private static native void nativeClose(JSObject ws, int code, String reason);
+
+    // ── Builder ──────────────────────────────────────────────────────────
 
     public interface Builder {
         TCompletableFuture<TWebSocket> buildAsync(URI uri, Listener listener);
     }
 
-    // ── Listener interface ────────────────────────────────────────────────
+    // ── Listener ─────────────────────────────────────────────────────────
 
     public interface Listener {
         void onOpen(TWebSocket ws);
-        org.teavm.classlib.java.util.concurrent.TCompletionStage<?> onText(
-                TWebSocket ws, CharSequence data, boolean last);
-        org.teavm.classlib.java.util.concurrent.TCompletionStage<?> onClose(
-                TWebSocket ws, int code, String reason);
+        TCompletionStage<?> onText(TWebSocket ws, CharSequence data, boolean last);
+        TCompletionStage<?> onClose(TWebSocket ws, int statusCode, String reason);
         void onError(TWebSocket ws, Throwable error);
     }
 
-    // ── Builder implementation (package-private) ──────────────────────────
+    // ── Builder implementation ───────────────────────────────────────────
 
     static class BuilderImpl implements Builder {
         @Override

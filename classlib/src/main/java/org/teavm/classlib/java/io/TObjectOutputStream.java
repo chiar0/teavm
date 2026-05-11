@@ -110,17 +110,7 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
         // Trove Externalizable
         JDK_SUIDS.put("gnu.trove.impl.hash.THash",     -1792948471915530295L);
 
-        // Ludii classes without declared SUID — JVM-computed values
-        // (until serialVersionUID = 1L is added to these source classes)
-        JDK_SUIDS.put("game.equipment.other.Map",       562689413632845372L);
-        JDK_SUIDS.put("game.equipment.other.Regions",   9131228671677844363L);
-        JDK_SUIDS.put("game.functions.booleans.BooleanFunction", -8186094994586309608L);
-        JDK_SUIDS.put("game.functions.directions.Union", -8428686335448527228L);
-        JDK_SUIDS.put("game.functions.ints.IntFunction", 1965802786602055467L);
-        JDK_SUIDS.put("game.functions.region.RegionFunction", 5911177134226796258L);
-        JDK_SUIDS.put("game.functions.region.sites.LineOfSightType", 0L);
-        JDK_SUIDS.put("game.util.math.Pair",            5469498808744302781L);
-        JDK_SUIDS.put("game.util.moves.To",             7748765144562166352L);
+        // Ludii enums that declare serialVersionUID = 1L
     }
 
     // ── State ──────────────────────────────────────────────────────────────────
@@ -292,19 +282,6 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
         oos.writeObject(obj);
         oos.close();
         return baos.toByteArray();
-    }
-
-    /** @deprecated Use {@link #serialize(Object)} — schema manifest no longer needed. */
-    @Deprecated
-    public static byte[] serializeWithSchema(Object obj) throws IOException {
-        return serialize(obj);
-    }
-
-    /** @deprecated Use {@link #serialize(Object, java.util.function.Consumer)} — schema manifest no longer needed. */
-    @Deprecated
-    public static byte[] serializeWithSchema(Object obj,
-            java.util.function.Consumer<TObjectOutputStream> setup) throws IOException {
-        return serialize(obj, setup);
     }
 
     // ── Main writeObject loop (iterative) ──────────────────────────────────────
@@ -1527,10 +1504,8 @@ public class TObjectOutputStream extends OutputStream implements TObjectOutput {
         return 1L;
     }
 
-    /** Enum SUID lookup: enums default to 0 unless explicitly declared. */
+    /** Enum SUID lookup: JVM spec requires all enum descriptors to have SUID=0. */
     private static long lookupEnumSUID(String className) {
-        Long suid = JDK_SUIDS.get(className);
-        if (suid != null) return suid;
         return 0L;
     }
 
