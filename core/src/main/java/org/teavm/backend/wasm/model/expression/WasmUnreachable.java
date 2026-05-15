@@ -18,7 +18,18 @@ package org.teavm.backend.wasm.model.expression;
 import java.util.Set;
 
 public class WasmUnreachable extends WasmExpression {
+    private static int creationCount;
+
     public WasmUnreachable() {
+        creationCount++;
+    }
+
+    public static int getCreationCount() {
+        return creationCount;
+    }
+
+    public static void resetCreationCount() {
+        creationCount = 0;
     }
 
     @Override

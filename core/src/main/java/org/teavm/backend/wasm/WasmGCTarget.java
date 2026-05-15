@@ -61,6 +61,7 @@ import org.teavm.backend.wasm.model.WasmType;
 import org.teavm.backend.wasm.model.expression.WasmGetLocal;
 import org.teavm.backend.wasm.model.expression.WasmStructGet;
 import org.teavm.backend.wasm.model.expression.WasmStructSet;
+import org.teavm.backend.wasm.optimization.WasmGCCompactModeNarrowing;
 import org.teavm.backend.wasm.optimization.WasmGCExternRefFixup;
 import org.teavm.backend.wasm.optimization.WasmGCEmptyBodyFixup;
 import org.teavm.backend.wasm.optimization.WasmUsageCounter;
@@ -313,6 +314,7 @@ public class WasmGCTarget implements TeaVMTarget, TeaVMWasmGCHost {
 
     @Override
     public void emit(ListableClassHolderSource classes, BuildTarget buildTarget, String outputName) throws IOException {
+        org.teavm.backend.wasm.model.expression.WasmUnreachable.resetCreationCount();
         var module = new WasmModule();
         module.memoryImportName = "memory";
         module.memoryImportModule = "env";
@@ -391,6 +393,11 @@ public class WasmGCTarget implements TeaVMTarget, TeaVMWasmGCHost {
             }
         }
         moduleGenerator.generate();
+        var unreachableCount = org.teavm.backend.wasm.model.expression.WasmUnreachable.getCreationCount();
+        if (unreachableCount > 0) {
+            controller.getDiagnostics().warning(null,
+                    "WASM GC: {0} unreachable instructions emitted during code generation", unreachableCount);
+        }
         customGenerators.contributeToModule(module);
         generateExceptionExports(declarationsGenerator);
         adjustModuleMemory(module, moduleGenerator, buffersHeap);
@@ -550,8 +557,13 @@ public class WasmGCTarget implements TeaVMTarget, TeaVMWasmGCHost {
         var binaryRenderer = new WasmBinaryRenderer(binaryWriter, WasmBinaryVersion.V_0x1, obfuscated,
                 null, null, debugLines, null, WasmBinaryStatsCollector.EMPTY);
         optimizeIndexes(module);
+        WasmGCCompactModeNarrowing.apply(module);
         WasmGCExternRefFixup.apply(module);
-        WasmGCEmptyBodyFixup.apply(module);
+        int emptyBodiesFixed = WasmGCEmptyBodyFixup.apply(module);
+        if (emptyBodiesFixed > 0) {
+            System.getLogger("teavm").log(System.Logger.Level.INFO,
+                "WasmGC fixups: {0} empty bodies replaced with unreachable", emptyBodiesFixed);
+        }
         module.prepareForRendering();
         binaryRenderer.render(module, customSections(debugInfoBuilder, module));
         var data = binaryWriter.getData();

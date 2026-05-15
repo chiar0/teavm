@@ -53,7 +53,7 @@ public class WasmGCVirtualCallGenerator {
             if (method.getName().equals("clone") && method.parameterCount() == 0) {
                 return generateCloneViaClassInfo(instance);
             }
-            return new WasmUnreachable();
+            return new WasmNullConstant(WasmType.Reference.ANY);
         }
 
         // For interface VTs, redirect to the non-interface ancestor's VT
@@ -68,13 +68,13 @@ public class WasmGCVirtualCallGenerator {
 
         var entry = dispatchVT.entry(method.getDescriptor());
         if (entry == null) {
-            return new WasmUnreachable();
+            return new WasmNullConstant(WasmType.Reference.ANY);
         }
 
         var dispatchClassInfo = classInfoProvider.getClassInfo(dispatchVT.getClassName());
         var vtableStruct = dispatchClassInfo.getVirtualTableStructure();
         if (vtableStruct == null) {
-            return new WasmUnreachable();
+            return new WasmNullConstant(WasmType.Reference.ANY);
         }
 
         var objectClass = classInfoProvider.getClassInfo("java.lang.Object");

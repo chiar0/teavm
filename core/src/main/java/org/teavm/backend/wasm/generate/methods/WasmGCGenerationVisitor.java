@@ -1059,12 +1059,18 @@ public class WasmGCGenerationVisitor extends BaseWasmGenerationVisitor {
         target.acceptVisitor(typeInference);
         var type = (WasmType.CompositeReference) typeInference.getSingleResult();
         if (type == null) {
-            return new WasmUnreachable();
+            context.diagnostics().warning(null,
+                    "WASM GC: type inference returned null for field ''{0}'' of ''{1}''",
+                    expr.getField().getFieldName(), expr.getField().getClassName());
+            return new WasmNullConstant(WasmType.Reference.ANY);
         }
         var struct = (WasmStructure) type.composite;
         var fieldIndex = context.classInfoProvider().getFieldIndex(expr.getField());
         if (fieldIndex < 0) {
-            return new WasmUnreachable();
+            context.diagnostics().warning(null,
+                    "WASM GC: field index not found for ''{0}'' of ''{1}''",
+                    expr.getField().getFieldName(), expr.getField().getClassName());
+            return new WasmNullConstant(WasmType.Reference.ANY);
         }
         var structGet = new WasmStructGet(struct, target, fieldIndex);
         var cls = context.classes().get(expr.getField().getClassName());

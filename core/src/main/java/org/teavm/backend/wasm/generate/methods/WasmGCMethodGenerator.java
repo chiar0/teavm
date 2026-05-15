@@ -46,6 +46,7 @@ import org.teavm.backend.wasm.model.WasmLocal;
 import org.teavm.backend.wasm.model.WasmModule;
 import org.teavm.backend.wasm.model.WasmTag;
 import org.teavm.backend.wasm.model.WasmType;
+import org.teavm.backend.wasm.model.expression.WasmCast;
 import org.teavm.backend.wasm.model.expression.WasmBlock;
 import org.teavm.backend.wasm.model.expression.WasmCall;
 import org.teavm.backend.wasm.model.expression.WasmCatch;
@@ -452,7 +453,16 @@ public class WasmGCMethodGenerator implements BaseWasmFunctionRepository {
 
         Supplier<WasmExpression> obj = method.hasModifier(ElementModifier.STATIC)
                 ? () -> generateClassLiteral(method.getOwnerName())
-                : () -> new WasmGetLocal(function.getLocalVariables().get(0));
+                : () -> {
+                    var localGet = new WasmGetLocal(function.getLocalVariables().get(0));
+                    if (compactMode) {
+                        var classType = typeMapper.mapType(ValueType.object(method.getOwnerName()));
+                        if (classType instanceof WasmType.Reference) {
+                            return new WasmCast(localGet, (WasmType.Reference) classType);
+                        }
+                    }
+                    return localGet;
+                };
         visitor.monitorEnter(obj.get(), null, target);
 
         var returnBlock = new WasmBlock(false);
